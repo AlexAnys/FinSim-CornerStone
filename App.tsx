@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { StudentPortal } from './components/StudentPortal';
 import { TeacherDashboard } from './components/TeacherDashboard';
@@ -20,16 +19,13 @@ function App() {
   const [chatHistory, setChatHistory] = useState<Message[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // Listen to Firebase Auth state
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // User is signed in, fetch profile
         const profile = await AuthService.fetchUserProfile(firebaseUser.uid);
         if (profile) {
             handleLoginSuccess(profile);
         } else {
-            // Edge case: Auth exists but Firestore doc missing. Logout or handle error.
             AuthService.logout();
         }
       } else {
@@ -53,7 +49,6 @@ function App() {
 
   const handleLogout = () => {
     AuthService.logout();
-    // View reset handled by onAuthStateChanged
   };
 
   const handleStartTask = (task: TaskRecord) => {
@@ -72,7 +67,7 @@ function App() {
           <div className="min-h-screen flex items-center justify-center bg-[#f8faff]">
               <Loader2 className="animate-spin text-blue-500 w-10 h-10" />
           </div>
-      )
+      );
   }
 
   return (
@@ -90,19 +85,19 @@ function App() {
       )}
 
       {view === 'student-chat' && currentTask && user && (
-        <ChatInterface 
-          config={currentTask} 
-          onFinish={handleFinishChat} 
+        <ChatInterface
+          config={currentTask}
+          onFinish={handleFinishChat}
           onBack={() => setView('student-portal')}
+          user={user}
         />
       )}
 
       {view === 'student-result' && currentTask && user && (
-        <EvaluationResult 
-          config={currentTask} 
-          studentName={user.name} 
-          studentId={user.id}     
-          messages={chatHistory} 
+        <EvaluationResult
+          config={currentTask}
+          user={user}
+          messages={chatHistory}
           onRestart={() => setView('student-portal')}
         />
       )}

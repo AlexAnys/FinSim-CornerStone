@@ -1,19 +1,19 @@
 
-import { 
-  collection, 
-  getDocs, 
-  doc, 
-  setDoc, 
-  deleteDoc, 
-  query, 
-  orderBy,
-  addDoc
+import {
+  collection,
+  getDocs,
+  doc,
+  setDoc,
+  deleteDoc,
+  query,
+  orderBy
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { TaskRecord, StudentSubmission } from '../types';
+import { TaskRecord, StudentSubmission, SessionRecord } from '../types';
 
 const TASKS_COLLECTION = 'tasks';
 const SUBMISSIONS_COLLECTION = 'submissions';
+const SESSIONS_COLLECTION = 'sessions';
 
 export const DbService = {
   // --- TASKS ---
@@ -73,10 +73,24 @@ export const DbService = {
   },
 
   clearAllSubmissions: async () => {
-    // Note: Deleting collection is not directly supported in client SDK for large collections, 
+    // Note: Deleting collection is not directly supported in client SDK for large collections,
     // but for this MVP we iterate.
     const snapshot = await getDocs(collection(db, SUBMISSIONS_COLLECTION));
     const deletePromises = snapshot.docs.map(d => deleteDoc(d.ref));
     await Promise.all(deletePromises);
+  },
+
+  // --- SESSIONS ---
+  saveSession: async (session: SessionRecord): Promise<SessionRecord> => {
+    await setDoc(doc(db, SESSIONS_COLLECTION, session.id), session);
+    return session;
+  },
+
+  getSessionsByUser: async (userId: string): Promise<SessionRecord[]> => {
+    const q = query(collection(db, SESSIONS_COLLECTION), orderBy('startedAt', 'desc'));
+    const snapshot = await getDocs(q);
+    return snapshot.docs
+      .map(docSnap => docSnap.data() as SessionRecord)
+      .filter(s => s.userId === userId);
   }
 };
