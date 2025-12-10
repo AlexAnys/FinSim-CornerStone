@@ -48,6 +48,15 @@ export interface GradeResult {
   }[];
 }
 
+export interface SessionRecord {
+  id: string;
+  userId: string;
+  taskId: string;
+  taskName: string;
+  startedAt: number;
+  endedAt: number;
+}
+
 // Student Submission in DB
 export interface StudentSubmission {
   id: string;
