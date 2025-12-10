@@ -1,25 +1,21 @@
-
 import React, { useEffect, useState, useRef } from 'react';
-import { SimulationConfig, Message, GradeResult } from '../types';
+import { SimulationConfig, Message, GradeResult, User } from '../types';
 import { evaluateSession } from '../services/geminiService';
 import { DbService } from '../services/dbService';
 import { Loader2, CheckCircle, XCircle, Award, RotateCcw } from 'lucide-react';
 
 interface EvaluationResultProps {
-  config: SimulationConfig & { id?: string }; // Task might have ID
-  studentName: string;
-  studentId: string;
+  config: SimulationConfig & { id?: string };
+  user: User;
   messages: Message[];
   onRestart: () => void;
 }
 
-export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, studentName, studentId, messages, onRestart }) => {
+export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, user, messages, onRestart }) => {
   const [result, setResult] = useState<GradeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  
-  // Prevent double submission
   const hasRunRef = useRef(false);
 
   useEffect(() => {
@@ -28,14 +24,13 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
 
     const runEvaluation = async () => {
       try {
-        const grade = await evaluateSession(config, messages);
+        const grade = await evaluateSession(config as SimulationConfig, messages);
         setResult(grade);
 
-        // Auto Save to DB if we have a task ID
         if (config.id) {
           await DbService.saveSubmission({
-            studentName: studentName,
-            studentId: studentId,
+            studentName: user.name,
+            studentId: user.id,
             taskId: config.id,
             taskName: config.taskName,
             grade: grade,
@@ -45,7 +40,7 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
         }
 
       } catch (err) {
-        setError('无法完成评估，请稍后重试。');
+        setError(`无法完成评估，请稍后重试。错误: ${(err as Error).message}`);
         console.error(err);
       } finally {
         setLoading(false);
@@ -53,8 +48,7 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
     };
 
     runEvaluation();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, [config, messages, user.id, user.name]);
 
   if (loading) {
     return (
@@ -91,12 +85,11 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
   return (
     <div className="min-h-screen bg-slate-50 py-12 px-4">
       <div className="max-w-4xl mx-auto space-y-8">
-        {/* Header Card */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 flex flex-col md:flex-row justify-between items-center gap-6">
           <div>
             <h1 className="text-2xl font-bold text-slate-800 mb-1">表现评估</h1>
             <p className="text-slate-500">任务: {config.taskName}</p>
-            <p className="text-slate-400 text-sm mt-1">学员: {studentName}</p>
+            <p className="text-slate-400 text-sm mt-1">学员: {user.name}</p>
           </div>
           <div className="flex flex-col items-end gap-2">
             <div className="flex items-center gap-4 bg-slate-50 px-6 py-4 rounded-xl border border-slate-100">
@@ -117,7 +110,6 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
           </div>
         </div>
 
-        {/* General Feedback */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
             <div className="flex items-center gap-2 mb-4">
                 <Award className="text-blue-500" />
@@ -126,7 +118,6 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
             <p className="text-slate-700 leading-relaxed whitespace-pre-line">{result.feedback}</p>
         </div>
 
-        {/* Detailed Breakdown */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
             <div className="p-6 border-b border-slate-100 bg-slate-50/50">
                 <h2 className="text-lg font-bold text-slate-800">得分详情</h2>
