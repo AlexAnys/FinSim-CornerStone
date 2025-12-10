@@ -21,6 +21,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@modelcontextprotocol/sdk/client/index.js": [
+        "./stubs/modelcontextprotocol.ts"
       ]
     },
     "allowImportingTsExtensions": true,

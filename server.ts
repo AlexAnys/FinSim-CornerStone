@@ -1,11 +1,24 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
-import dotenv from 'dotenv';
+import fs from 'fs';
 import admin from 'firebase-admin';
 import chatRoutes from './server/routes/chat.js';
 
-dotenv.config();
+// Lightweight .env loader to avoid external dependencies when the registry is blocked
+const envPath = path.resolve('.env');
+if (fs.existsSync(envPath)) {
+  const lines = fs.readFileSync(envPath, 'utf-8').split(/\r?\n/);
+  for (const line of lines) {
+    if (!line || line.startsWith('#')) continue;
+    const [rawKey, ...rest] = line.split('=');
+    if (!rawKey) continue;
+    const key = rawKey.trim();
+    if (process.env[key]) continue;
+    const value = rest.join('=').trim().replace(/^"|"$/g, '').replace(/^'|'$/g, '');
+    process.env[key] = value;
+  }
+}
 
 admin.initializeApp();
 

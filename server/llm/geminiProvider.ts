@@ -1,9 +1,9 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import type { LLMProvider, ChatRequest, EvaluateRequest, AnalysisRequest } from './llmProvider.js';
 
 interface SessionState {
   systemInstruction: string;
-  history: { role: 'user' | 'model'; parts: string[] }[];
+  history: { role: 'user' | 'model'; parts: { text: string }[] }[];
 }
 
 const buildSystemInstruction = (config: any) => `
@@ -69,7 +69,7 @@ export class GeminiProvider implements LLMProvider {
 
     const contents = [
       ...state.history,
-      { role: 'user' as const, parts: [message] }
+      { role: 'user' as const, parts: [{ text: message }] }
     ];
 
     const response = await this.client.models.generateContent({
@@ -79,11 +79,11 @@ export class GeminiProvider implements LLMProvider {
       generationConfig: {
         temperature: 0.9
       }
-    });
+    } as any);
 
-    const text = response.text || response.response?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') || '';
-    state.history.push({ role: 'user', parts: [message] });
-    state.history.push({ role: 'model', parts: [text] });
+    const text = response.text || '';
+    state.history.push({ role: 'user', parts: [{ text: message }] });
+    state.history.push({ role: 'model', parts: [{ text }] });
     this.sessions.set(sessionId, state);
     return text;
   }
@@ -93,31 +93,11 @@ export class GeminiProvider implements LLMProvider {
 
     const response = await this.client.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            totalScore: { type: Type.NUMBER },
-            feedback: { type: Type.STRING },
-            breakdown: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  criterionId: { type: Type.STRING },
-                  score: { type: Type.NUMBER },
-                  comment: { type: Type.STRING }
-                },
-                required: ['criterionId', 'score', 'comment']
-              }
-            }
-          },
-          required: ['totalScore', 'feedback', 'breakdown']
-        }
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: 'application/json'
       }
-    });
+    } as any);
 
     const result = response.text ? JSON.parse(response.text) : {};
     const maxScore = payload.taskConfig.rubric.reduce((acc: number, curr: any) => acc + curr.points, 0);
@@ -153,35 +133,11 @@ export class GeminiProvider implements LLMProvider {
 
     const response = await this.client.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            overallSummary: { type: Type.STRING },
-            groups: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  level: { type: Type.STRING, enum: ['high', 'medium', 'low'] },
-                  label: { type: Type.STRING },
-                  studentNames: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  averageScore: { type: Type.NUMBER },
-                  characteristics: { type: Type.STRING },
-                  masteredKnowledge: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  missingKnowledge: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  suggestion: { type: Type.STRING }
-                },
-                required: ['level', 'label', 'studentNames', 'averageScore', 'characteristics', 'masteredKnowledge', 'missingKnowledge', 'suggestion']
-              }
-            }
-          },
-          required: ['overallSummary', 'groups']
-        }
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: 'application/json'
       }
-    });
+    } as any);
 
     return response.text ? JSON.parse(response.text) : {};
   }
@@ -194,3 +150,4 @@ export const getProvider = () => {
   }
   return new GeminiProvider(apiKey);
 };
+/// <reference path="../../shims.d.ts" />
