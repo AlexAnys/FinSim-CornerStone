@@ -30,6 +30,8 @@ View your app in AI Studio: https://ai.studio/apps/drive/1Sphmg9rhOHju_tBisnwWB1
    npm run dev
    ```
 
+If you see merge conflict markers like `<<<<<<<` / `=======` / `>>>>>>>` in this section when pulling updates, keep the full numbered steps above (npm install → npm run api → npm run dev) and remove the markers—this is the authoritative run order for both current and incoming changes.
+
 部署到 Cloud Run 时，请将 `.env` 中的变量以环境变量方式传入容器，保证 GEMINI_API_KEY 仅在后端可见。
 
 附加说明（常见问题）：
