@@ -1,10 +1,11 @@
+
 import React, { useState, useEffect } from 'react';
 import { StudentPortal } from './components/StudentPortal';
 import { TeacherDashboard } from './components/TeacherDashboard';
 import { ChatInterface } from './components/ChatInterface';
 import { EvaluationResult } from './components/EvaluationResult';
 import { LoginPage } from './components/LoginPage';
-import { TaskRecord, Message, User } from './types';
+import { TaskRecord, Message, User, AssetScheme } from './types';
 import { AuthService } from './services/authService';
 import { auth } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -17,15 +18,19 @@ function App() {
   const [user, setUser] = useState<User | null>(null);
   const [currentTask, setCurrentTask] = useState<TaskRecord | null>(null);
   const [chatHistory, setChatHistory] = useState<Message[]>([]);
+  const [finalAssets, setFinalAssets] = useState<AssetScheme | undefined>(undefined);
   const [authLoading, setAuthLoading] = useState(true);
 
+  // Listen to Firebase Auth state
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        // User is signed in, fetch profile
         const profile = await AuthService.fetchUserProfile(firebaseUser.uid);
         if (profile) {
             handleLoginSuccess(profile);
         } else {
+            // Edge case: Auth exists but Firestore doc missing. Logout or handle error.
             AuthService.logout();
         }
       } else {
@@ -49,16 +54,19 @@ function App() {
 
   const handleLogout = () => {
     AuthService.logout();
+    // View reset handled by onAuthStateChanged
   };
 
   const handleStartTask = (task: TaskRecord) => {
     setCurrentTask(task);
     setChatHistory([]);
+    setFinalAssets(undefined);
     setView('student-chat');
   };
 
-  const handleFinishChat = (messages: Message[]) => {
+  const handleFinishChat = (messages: Message[], assets: AssetScheme) => {
     setChatHistory(messages);
+    setFinalAssets(assets);
     setView('student-result');
   };
 
@@ -67,7 +75,7 @@ function App() {
           <div className="min-h-screen flex items-center justify-center bg-[#f8faff]">
               <Loader2 className="animate-spin text-blue-500 w-10 h-10" />
           </div>
-      );
+      )
   }
 
   return (
@@ -85,19 +93,21 @@ function App() {
       )}
 
       {view === 'student-chat' && currentTask && user && (
-        <ChatInterface
-          config={currentTask}
-          onFinish={handleFinishChat}
+        <ChatInterface 
+          config={currentTask} 
+          studentId={user.id}
+          onFinish={handleFinishChat} 
           onBack={() => setView('student-portal')}
-          user={user}
         />
       )}
 
       {view === 'student-result' && currentTask && user && (
-        <EvaluationResult
-          config={currentTask}
-          user={user}
-          messages={chatHistory}
+        <EvaluationResult 
+          config={currentTask} 
+          studentName={user.name} 
+          studentId={user.id}     
+          messages={chatHistory} 
+          initialAssets={finalAssets}
           onRestart={() => setView('student-portal')}
         />
       )}

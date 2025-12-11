@@ -1,22 +1,31 @@
+
 import React, { useEffect, useState, useRef } from 'react';
-import { SimulationConfig, Message, GradeResult, User } from '../types';
+import { SimulationConfig, Message, GradeResult, AssetScheme, TaskRecord } from '../types';
 import { evaluateSession } from '../services/geminiService';
 import { DbService } from '../services/dbService';
-import { Loader2, CheckCircle, XCircle, Award, RotateCcw } from 'lucide-react';
+import { Loader2, CheckCircle, XCircle, Award, RotateCcw, Activity, PieChart, Briefcase } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface EvaluationResultProps {
-  config: SimulationConfig & { id?: string };
-  user: User;
+  config: SimulationConfig & { id?: string, creatorId?: string }; // Task might have ID and Creator info
+  studentName: string;
+  studentId: string;
   messages: Message[];
+  initialAssets?: AssetScheme;
   onRestart: () => void;
 }
 
-export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, user, messages, onRestart }) => {
+export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, studentName, studentId, messages, initialAssets, onRestart }) => {
+  const { language, t } = useLanguage();
   const [result, setResult] = useState<GradeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  
+  // Prevent double submission
   const hasRunRef = useRef(false);
+
+  const colorPalette = ['text-blue-600', 'text-green-600', 'text-orange-600', 'text-purple-600', 'text-teal-600', 'text-rose-600'];
 
   useEffect(() => {
     if (hasRunRef.current) return;
@@ -24,23 +33,26 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, user
 
     const runEvaluation = async () => {
       try {
-        const grade = await evaluateSession(config as SimulationConfig, messages);
+        const grade = await evaluateSession(config, messages, language);
         setResult(grade);
 
+        // Auto Save to DB if we have a task ID
         if (config.id) {
           await DbService.saveSubmission({
-            studentName: user.name,
-            studentId: user.id,
+            studentName: studentName,
+            studentId: studentId,
             taskId: config.id,
+            teacherId: config.creatorId || 'unknown', // Save the creatorId as teacherId
             taskName: config.taskName,
             grade: grade,
-            transcript: messages
+            transcript: messages,
+            assets: initialAssets // Save the asset allocation
           });
           setSaved(true);
         }
 
       } catch (err) {
-        setError(`无法完成评估，请稍后重试。错误: ${(err as Error).message}`);
+        setError(language === 'en' ? 'Evaluation failed, please retry.' : '无法完成评估，请稍后重试。');
         console.error(err);
       } finally {
         setLoading(false);
@@ -48,27 +60,33 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, user
     };
 
     runEvaluation();
-  }, [config, messages, user.id, user.name]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); 
 
   if (loading) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center bg-slate-50">
-        <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
-        <h2 className="text-xl font-semibold text-slate-800">评估员正在评分...</h2>
-        <p className="text-slate-500 mt-2">正在根据 {config.rubric.length} 项标准分析对话记录。</p>
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-900 text-white">
+        <div className="relative">
+             <div className="absolute inset-0 bg-blue-500 blur-xl opacity-20 rounded-full animate-pulse"></div>
+             <Loader2 className="w-16 h-16 text-blue-400 animate-spin mb-6 relative z-10" />
+        </div>
+        <h2 className="text-2xl font-bold mb-2">AI Analyzing...</h2>
+        <p className="text-slate-400">Processing {messages.length} interactions against {config.rubric.length} criteria.</p>
       </div>
     );
   }
 
   if (error || !result) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center bg-slate-50 p-6">
-        <div className="bg-red-50 p-6 rounded-xl border border-red-200 text-center max-w-md">
-            <XCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-            <h3 className="text-lg font-bold text-red-800 mb-2">评估失败</h3>
-            <p className="text-red-600 mb-4">{error}</p>
-            <button onClick={onRestart} className="px-4 py-2 bg-white border border-red-300 rounded text-red-700 font-medium hover:bg-red-50">
-                返回
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-50 p-6">
+        <div className="bg-white p-8 rounded-2xl border border-red-100 shadow-xl text-center max-w-md">
+            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                <XCircle className="w-8 h-8 text-red-500" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Analysis Failed</h3>
+            <p className="text-slate-500 mb-6">{error}</p>
+            <button onClick={onRestart} className="w-full px-4 py-3 bg-slate-900 text-white rounded-xl font-medium hover:bg-slate-800 transition-colors">
+                Return to Portal
             </button>
         </div>
       </div>
@@ -77,88 +95,126 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, user
 
   const percentage = Math.round((result.totalScore / result.maxScore) * 100);
   const getScoreColor = (p: number) => {
-    if (p >= 80) return 'text-green-600';
-    if (p >= 60) return 'text-yellow-600';
-    return 'text-red-600';
+    if (p >= 80) return 'text-emerald-500';
+    if (p >= 60) return 'text-yellow-500';
+    return 'text-red-500';
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 py-12 px-4">
-      <div className="max-w-4xl mx-auto space-y-8">
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 flex flex-col md:flex-row justify-between items-center gap-6">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-800 mb-1">表现评估</h1>
-            <p className="text-slate-500">任务: {config.taskName}</p>
-            <p className="text-slate-400 text-sm mt-1">学员: {user.name}</p>
+    // Fixed container to handle scrolling independently of the main app container which might be overflow-hidden
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50 font-sans custom-scrollbar">
+      <div className="min-h-full py-8 px-4">
+        <div className="max-w-5xl mx-auto space-y-6 pb-20"> {/* Added padding bottom to ensure scroll reach */}
+          {/* Header Card */}
+          <div className="bg-slate-900 rounded-2xl shadow-xl overflow-hidden text-white relative">
+            <div className="absolute top-0 right-0 p-8 opacity-10">
+                <Activity size={120} />
+            </div>
+            <div className="p-8 md:p-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative z-10">
+              <div>
+                  <div className="flex items-center gap-2 mb-2 opacity-80">
+                      <Activity size={16} className="text-blue-400" />
+                      <span className="text-xs font-bold uppercase tracking-wider">{t('eval.title')}</span>
+                  </div>
+                  <h1 className="text-2xl md:text-3xl font-bold mb-1">{config.taskName}</h1>
+                  <p className="text-slate-400 text-sm">Student: {studentName}</p>
+              </div>
+              <div className="flex items-center gap-6">
+                  <div className="text-right">
+                      <div className="text-sm font-medium text-slate-400 mb-1">{t('eval.score')}</div>
+                      <div className="flex items-baseline gap-1">
+                          <span className={`text-5xl font-bold ${getScoreColor(percentage)}`}>{result.totalScore}</span>
+                          <span className="text-xl text-slate-500">/{result.maxScore}</span>
+                      </div>
+                  </div>
+                   {saved && (
+                      <div className="bg-emerald-500/10 text-emerald-400 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 border border-emerald-500/20">
+                          <CheckCircle size={12} /> Saved
+                      </div>
+                  )}
+              </div>
+            </div>
           </div>
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex items-center gap-4 bg-slate-50 px-6 py-4 rounded-xl border border-slate-100">
-                <div className={`text-4xl font-bold ${getScoreColor(percentage)}`}>
-                {result.totalScore}
-                <span className="text-slate-400 text-xl font-normal">/{result.maxScore}</span>
-                </div>
-                <div className="text-right">
-                    <div className="text-sm font-semibold text-slate-700">最终得分</div>
-                    <div className="text-xs text-slate-500 uppercase tracking-wide">{config.strictness}模式</div>
-                </div>
-            </div>
-            {saved && (
-                <div className="flex items-center gap-1 text-xs text-green-600 font-medium">
-                    <CheckCircle size={12} /> 成绩已自动存档
-                </div>
-            )}
+
+          {/* Asset Allocation Display (Dynamic) */}
+          {initialAssets && Array.isArray(initialAssets) && (
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 {initialAssets.map((section, sIdx) => (
+                     <div key={sIdx} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col gap-4">
+                         <div className="flex items-center gap-2 mb-2">
+                             {sIdx === 0 ? <Briefcase size={20} className="text-blue-500" /> : <PieChart size={20} className="text-purple-500" />}
+                             <h3 className="font-bold text-slate-800">{section.title}</h3>
+                         </div>
+                         <div className="flex gap-2">
+                             {section.items.map((item, iIdx) => {
+                                 const colorClass = colorPalette[iIdx % colorPalette.length];
+                                 return (
+                                     <div key={iIdx} className="flex-1 text-center p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                         <div className="text-xs text-slate-500 mb-1">{item.label}</div>
+                                         <div className={`${colorClass} font-bold text-lg`}>{item.value}%</div>
+                                     </div>
+                                 )
+                             })}
+                         </div>
+                     </div>
+                 ))}
+             </div>
+          )}
+
+          {/* General Feedback */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+              <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2 bg-blue-50 rounded-lg text-blue-600">
+                      <Award size={24} />
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-800">{t('eval.feedback')}</h2>
+              </div>
+              <p className="text-slate-600 leading-relaxed whitespace-pre-line pl-2 border-l-4 border-blue-500">
+                  {result.feedback}
+              </p>
           </div>
-        </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
-            <div className="flex items-center gap-2 mb-4">
-                <Award className="text-blue-500" />
-                <h2 className="text-lg font-bold text-slate-800">评估员点评</h2>
-            </div>
-            <p className="text-slate-700 leading-relaxed whitespace-pre-line">{result.feedback}</p>
-        </div>
+          {/* Detailed Breakdown */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="p-6 border-b border-slate-100 bg-slate-50">
+                  <h2 className="text-lg font-bold text-slate-800">{t('eval.breakdown')}</h2>
+              </div>
+              <div className="divide-y divide-slate-100">
+                  {result.breakdown.map((item, idx) => {
+                      const criterionConfig = config.rubric.find(r => r.id === item.criterionId);
+                      const maxPoints = criterionConfig ? criterionConfig.points : '?';
+                      const isPerfect = item.score === maxPoints;
 
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-                <h2 className="text-lg font-bold text-slate-800">得分详情</h2>
-            </div>
-            <div className="divide-y divide-slate-100">
-                {result.breakdown.map((item, idx) => {
-                    const criterionConfig = config.rubric.find(r => r.id === item.criterionId);
-                    const maxPoints = criterionConfig ? criterionConfig.points : '?';
-                    const isPerfect = item.score === maxPoints;
+                      return (
+                          <div key={idx} className="p-6 hover:bg-slate-50/50 transition-colors group">
+                              <div className="flex justify-between items-start mb-3">
+                                  <h3 className="font-semibold text-slate-800 flex-1 pr-8">
+                                      {criterionConfig?.description || `Criterion ${item.criterionId}`}
+                                  </h3>
+                                  <div className="flex items-center gap-3 min-w-[100px] justify-end">
+                                      <div className={`px-3 py-1 rounded-lg font-bold text-sm ${isPerfect ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>
+                                          {item.score} <span className="opacity-50 text-xs font-normal">/ {maxPoints}</span>
+                                      </div>
+                                  </div>
+                              </div>
+                              <p className="text-sm text-slate-500 bg-slate-50 p-3 rounded-lg border border-slate-100 group-hover:border-slate-200 transition-colors">
+                                  {item.comment}
+                              </p>
+                          </div>
+                      );
+                  })}
+              </div>
+          </div>
 
-                    return (
-                        <div key={idx} className="p-6 hover:bg-slate-50/30 transition-colors">
-                            <div className="flex justify-between items-start mb-2">
-                                <h3 className="font-semibold text-slate-700 flex-1 pr-4">
-                                    {criterionConfig?.description || `Criterion ${item.criterionId}`}
-                                </h3>
-                                <div className="flex items-center gap-2 min-w-[80px] justify-end">
-                                    {isPerfect && <CheckCircle size={16} className="text-green-500" />}
-                                    <span className={`font-bold ${isPerfect ? 'text-green-600' : 'text-slate-700'}`}>
-                                        {item.score}
-                                    </span>
-                                    <span className="text-slate-400 text-sm">/ {maxPoints}</span>
-                                </div>
-                            </div>
-                            <p className="text-sm text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                                {item.comment}
-                            </p>
-                        </div>
-                    );
-                })}
-            </div>
-        </div>
-
-        <div className="flex justify-center pt-8">
-            <button
-                onClick={onRestart}
-                className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-8 py-3 rounded-xl font-medium shadow-lg shadow-slate-200 transition-all hover:-translate-y-1"
-            >
-                <RotateCcw size={18} />
-                完成
-            </button>
+          <div className="flex justify-center pt-6">
+              <button
+                  onClick={onRestart}
+                  className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-8 py-4 rounded-xl font-bold shadow-xl shadow-slate-200 transition-all hover:-translate-y-1"
+              >
+                  <RotateCcw size={20} />
+                  {t('eval.complete')}
+              </button>
+          </div>
         </div>
       </div>
     </div>

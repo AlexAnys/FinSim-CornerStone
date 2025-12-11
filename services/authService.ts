@@ -32,7 +32,7 @@ export const AuthService = {
   },
 
   // Register new account (for setup convenience)
-  register: async (email: string, password: string, name: string, role: UserRole): Promise<User> => {
+  register: async (email: string, password: string, name: string, role: UserRole, className?: string): Promise<User> => {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const fbUser = userCredential.user;
 
@@ -41,7 +41,8 @@ export const AuthService = {
       email: email,
       name: name,
       role: role,
-      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`,
+      className: className // Save optional class name
     };
 
     // Save extended user info to Firestore
