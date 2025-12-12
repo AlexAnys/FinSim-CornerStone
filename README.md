@@ -3,6 +3,11 @@
 # Deployed Application (Direct access):
 https://finsim-ai-investor-roleplay-1074661183500.us-west1.run.app
 
+Admin Key for Teacher account register: 135246
+Sample account:
+- Student:   alex@qq.com   123456
+- Teacher:   molly@qq.com   123456 
+
 # Run and deploy your AI Studio app
 
 This contains everything you need to run your app locally.
