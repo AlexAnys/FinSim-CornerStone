@@ -1,8 +1,8 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { TaskRecord, User, StudentSubmission, StudentGroup, TaskAssignment } from '../types';
 import { DbService } from '../services/dbService';
-import { User as UserIcon, BookOpen, ChevronRight, LogOut, Loader2, Activity, Clock, Award, History, Edit2, Users, Save, Check } from 'lucide-react';
+import { User as UserIcon, BookOpen, ChevronRight, LogOut, Loader2, Activity, Clock, Award, History, Edit2, Users, Save, Check, Bell, Calendar } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { SubmissionDetailModal } from './SubmissionDetailModal';
 
@@ -12,11 +12,11 @@ interface StudentPortalProps {
   onExit: () => void;
 }
 
-type Tab = 'tasks' | 'history';
+type Tab = 'assignments' | 'tasks' | 'history';
 
 export const StudentPortal: React.FC<StudentPortalProps> = ({ user, onStartTask, onExit }) => {
   const { t, language } = useLanguage();
-  const [activeTab, setActiveTab] = useState<Tab>('tasks');
+  const [activeTab, setActiveTab] = useState<Tab>('assignments');
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [assignments, setAssignments] = useState<TaskAssignment[]>([]);
   const [mySubmissions, setMySubmissions] = useState<StudentSubmission[]>([]);
@@ -44,6 +44,10 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ user, onStartTask,
             setMySubmissions(submissionList);
             setMyGroups(groupList);
             setAssignments(assignmentList);
+            
+            // Auto switch to 'tasks' if no assignments found initially, optional UX
+            // const hasAssignments = assignmentList.some(a => a.className === user.className);
+            // if (!hasAssignments) setActiveTab('tasks');
         } catch (error) {
             console.error("Failed to load data", error);
         } finally {
@@ -53,9 +57,8 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ user, onStartTask,
     loadData();
   }, [user.id]);
 
-  const handleStart = () => {
-    if (!selectedTaskId) return;
-    const task = tasks.find(t => t.id === selectedTaskId);
+  const handleStart = (taskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
     if (task) {
       onStartTask(task);
     }
@@ -82,30 +85,48 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ user, onStartTask,
       return 'text-red-600 bg-red-50 border-red-200';
   };
 
-  // Filter Tasks based on Assignments
-  const visibleTasks = tasks.filter(task => {
-      // 1. Find assignments for this task
-      const taskAssignments = assignments.filter(a => a.taskId === task.id);
-      
-      // 2. If no assignments exist for this task at all, show it (Backward compatibility for legacy tasks)
-      if (taskAssignments.length === 0) return true;
+  // 1. "My Assignments" Logic: Filter based on Class & Group
+  const myAssignments = useMemo(() => {
+    return assignments.filter(a => {
+        // Class Match
+        if (a.className !== user.className) return false;
+        // Group Match (if strict groups defined)
+        if (a.groupIds && a.groupIds.length > 0) {
+            const userGroupIds = myGroups.map(g => g.id);
+            return a.groupIds.some(gid => userGroupIds.includes(gid));
+        }
+        return true;
+    }).sort((a,b) => b.createdAt - a.createdAt);
+  }, [assignments, user.className, myGroups]);
 
-      // 3. If assignments exist, check if ANY matches the student
-      const hasMatchingAssignment = taskAssignments.some(a => {
-          // Match Class
-          if (a.className !== user.className) return false;
-          // Match Groups (if specified)
-          if (a.groupIds && a.groupIds.length > 0) {
-             const userGroupIds = myGroups.map(g => g.id);
-             // Must be in at least one of the target groups
-             return a.groupIds.some(gid => userGroupIds.includes(gid));
-          }
-          // If no groups specified, it's for the whole class
-          return true;
+  // 2. "Task Library" Logic: Deduplicate and show tasks that are relevant
+  const libraryTasks = useMemo(() => {
+      // Find all tasks that match any assignment to this student
+      const assignedTaskIds = new Set(myAssignments.map(a => a.taskId));
+      
+      // Also potentially include tasks with NO assignments (legacy behavior), 
+      // but let's assume library should show "All unique tasks that are relevant".
+      // To prevent duplication in UI if there are multiple Task Definitions with same name (from seed imports),
+      // we deduplicate by Task Name, preferring the one that is assigned or latest.
+
+      let filtered = tasks.filter(t => {
+           if (assignedTaskIds.has(t.id)) return true;
+           // Also include tasks that have 0 assignments globally (public/legacy)
+           const isGloballyAssigned = assignments.some(a => a.taskId === t.id);
+           return !isGloballyAssigned;
       });
 
-      return hasMatchingAssignment;
-  });
+      // Deduplicate by Name
+      const uniqueMap = new Map<string, TaskRecord>();
+      filtered.forEach(t => {
+          // If duplicate name, prefer the one that is assigned to user, or just latest
+          if (!uniqueMap.has(t.taskName) || assignedTaskIds.has(t.id)) {
+               uniqueMap.set(t.taskName, t);
+          }
+      });
+      
+      return Array.from(uniqueMap.values());
+  }, [tasks, myAssignments, assignments]);
 
   return (
     <div className="h-screen bg-slate-900 flex items-center justify-center p-6 relative overflow-hidden w-full">
@@ -202,6 +223,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ user, onStartTask,
             <div className="bg-white p-6 border-b border-slate-100 flex justify-between items-center">
                 <div className="flex gap-6 text-sm font-bold">
                     <button 
+                        onClick={() => setActiveTab('assignments')}
+                        className={`pb-1 transition-all ${activeTab === 'assignments' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-400 hover:text-slate-600'}`}
+                    >
+                        <span className="flex items-center gap-2"><Bell size={18}/> Latest Assignments <span className="text-xs bg-red-100 text-red-600 px-1.5 rounded-full">{myAssignments.length}</span></span>
+                    </button>
+                    <button 
                         onClick={() => setActiveTab('tasks')}
                         className={`pb-1 transition-all ${activeTab === 'tasks' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-400 hover:text-slate-600'}`}
                     >
@@ -217,6 +244,62 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ user, onStartTask,
             </div>
             
             <div className="flex-1 overflow-y-auto p-6 scrollbar-thin bg-slate-50/50">
+                {/* 1. LATEST ASSIGNMENTS TAB */}
+                {activeTab === 'assignments' && (
+                    <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
+                        {loading ? (
+                            <div className="flex justify-center py-8"><Loader2 className="animate-spin text-slate-400" /></div>
+                        ) : myAssignments.length === 0 ? (
+                            <div className="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300">
+                                <Bell className="mx-auto text-slate-300 mb-2" size={32} />
+                                <p className="text-slate-500 text-sm">No new assignments.</p>
+                                <button onClick={() => setActiveTab('tasks')} className="mt-2 text-blue-600 font-bold text-sm hover:underline">Browse Library</button>
+                            </div>
+                        ) : (
+                            myAssignments.map(assignment => {
+                                const task = tasks.find(t => t.id === assignment.taskId);
+                                if (!task) return null;
+                                
+                                // Determine matching group names for display
+                                const targetGroups = assignment.groupIds.length > 0 
+                                  ? myGroups.filter(g => assignment.groupIds.includes(g.id)).map(g => g.name)
+                                  : ['Entire Class'];
+
+                                return (
+                                    <div key={assignment.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all">
+                                        <div className="flex justify-between items-start mb-3">
+                                            <div>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">New</span>
+                                                    <h3 className="font-bold text-slate-800 text-base">{assignment.title || task.taskName}</h3>
+                                                </div>
+                                                <div className="text-xs text-slate-500 flex flex-col gap-1 mt-2">
+                                                    <span className="flex items-center gap-1">
+                                                        <UserIcon size={12} /> Posted by <span className="font-semibold text-slate-700">{assignment.teacherName || 'Teacher'}</span>
+                                                    </span>
+                                                    <span className="flex items-center gap-1">
+                                                        <Users size={12} /> Assigned to: <span className="font-semibold text-slate-700">{targetGroups.join(', ')}</span>
+                                                    </span>
+                                                    <span className="flex items-center gap-1">
+                                                        <Calendar size={12} /> {new Date(assignment.createdAt).toLocaleString()}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <button 
+                                                onClick={() => handleStart(task.id)}
+                                                className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 shadow-sm flex items-center gap-1"
+                                            >
+                                                Start <ChevronRight size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                )
+                            })
+                        )}
+                    </div>
+                )}
+
+                {/* 2. TASK LIBRARY TAB */}
                 {activeTab === 'tasks' && (
                     <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
                         {loading ? (
@@ -225,12 +308,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ user, onStartTask,
                             </div>
                         ) : (
                             <div className="space-y-3">
-                                {visibleTasks.length === 0 ? (
+                                {libraryTasks.length === 0 ? (
                                     <div className="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300">
                                         <p className="text-slate-400 text-sm">{t('student.no_tasks')}</p>
                                     </div>
                                 ) : (
-                                    visibleTasks.map(task => (
+                                    libraryTasks.map(task => (
                                         <div 
                                             key={task.id}
                                             onClick={() => setSelectedTaskId(task.id)}
@@ -264,7 +347,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ user, onStartTask,
                         )}
                         
                         <button 
-                            onClick={handleStart}
+                            onClick={() => selectedTaskId && handleStart(selectedTaskId)}
                             disabled={!selectedTaskId || loading}
                             className={`w-full py-4 rounded-xl font-bold text-white transition-all shadow-md flex items-center justify-center gap-2 mt-4 ${
                                 selectedTaskId 
@@ -277,6 +360,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ user, onStartTask,
                     </div>
                 )}
 
+                {/* 3. HISTORY TAB */}
                 {activeTab === 'history' && (
                     <div className="space-y-4 animate-in slide-in-from-left-4 duration-300">
                         {loading ? (

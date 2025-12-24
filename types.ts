@@ -59,6 +59,7 @@ export interface TaskAssignment {
   id: string;
   taskId: string;
   teacherId: string;
+  teacherName?: string; // Added teacher name for display
   className: string;
   groupIds: string[]; // Empty means entire class
   createdAt: number;

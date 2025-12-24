@@ -1,12 +1,6 @@
-# Capstone Project for 36110 Application Development - Alex AN
-
-# Deployed Application (Direct access):
-https://finsim-ai-investor-roleplay-1074661183500.us-west1.run.app
-
-Admin Key for Teacher account register: 135246
-Sample account:
-- Student:   alex@qq.com   123456
-- Teacher:   molly@qq.com   123456 
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
 
 # Run and deploy your AI Studio app
 
@@ -21,5 +15,6 @@ View your app in AI Studio: https://ai.studio/apps/drive/1Sphmg9rhOHju_tBisnwWB1
 
 1. Install dependencies:
    `npm install`
-2. Run the app:
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
    `npm run dev`

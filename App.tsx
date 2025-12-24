@@ -21,16 +21,13 @@ function App() {
   const [finalAssets, setFinalAssets] = useState<AssetScheme | undefined>(undefined);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // Listen to Firebase Auth state
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // User is signed in, fetch profile
         const profile = await AuthService.fetchUserProfile(firebaseUser.uid);
         if (profile) {
             handleLoginSuccess(profile);
         } else {
-            // Edge case: Auth exists but Firestore doc missing. Logout or handle error.
             AuthService.logout();
         }
       } else {
@@ -54,7 +51,6 @@ function App() {
 
   const handleLogout = () => {
     AuthService.logout();
-    // View reset handled by onAuthStateChanged
   };
 
   const handleStartTask = (task: TaskRecord) => {
@@ -104,8 +100,7 @@ function App() {
       {view === 'student-result' && currentTask && user && (
         <EvaluationResult 
           config={currentTask} 
-          studentName={user.name} 
-          studentId={user.id}     
+          student={user}     
           messages={chatHistory} 
           initialAssets={finalAssets}
           onRestart={() => setView('student-portal')}

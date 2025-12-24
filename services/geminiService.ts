@@ -45,8 +45,9 @@ export const createSimulationChat = (config: SimulationConfig, language: 'zh' | 
     9. ${langInstruction}
   `;
 
+  // Fix: Updated model to gemini-3-flash-preview as per the task type (basic text simulation).
   return ai.chats.create({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3-flash-preview',
     config: {
       systemInstruction: systemInstruction,
       temperature: 0.9, 
@@ -99,8 +100,9 @@ export const evaluateSession = async (
     **${langInstruction}**
   `;
 
+  // Fix: Updated model to gemini-3-flash-preview for the evaluation task.
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3-flash-preview',
     contents: prompt,
     config: {
       responseMimeType: "application/json",
@@ -186,8 +188,9 @@ export const generateClassAnalysis = async (submissions: StudentSubmission[], la
     **${langInstruction}**
   `;
 
+  // Fix: Updated model to gemini-3-flash-preview for generating the class analysis report.
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3-flash-preview',
     contents: prompt,
     config: {
       responseMimeType: "application/json",

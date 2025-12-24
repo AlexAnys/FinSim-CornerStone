@@ -1,28 +1,26 @@
 
 import React, { useEffect, useState, useRef } from 'react';
-import { SimulationConfig, Message, GradeResult, AssetScheme, TaskRecord } from '../types';
+import { SimulationConfig, Message, GradeResult, AssetScheme, TaskRecord, User } from '../types';
 import { evaluateSession } from '../services/geminiService';
 import { DbService } from '../services/dbService';
 import { Loader2, CheckCircle, XCircle, Award, RotateCcw, Activity, PieChart, Briefcase } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 
 interface EvaluationResultProps {
-  config: SimulationConfig & { id?: string, creatorId?: string }; // Task might have ID and Creator info
-  studentName: string;
-  studentId: string;
+  config: SimulationConfig & { id?: string, creatorId?: string };
+  student: User; // Changed from studentName/studentId to full User object
   messages: Message[];
   initialAssets?: AssetScheme;
   onRestart: () => void;
 }
 
-export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, studentName, studentId, messages, initialAssets, onRestart }) => {
+export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, student, messages, initialAssets, onRestart }) => {
   const { language, t } = useLanguage();
   const [result, setResult] = useState<GradeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   
-  // Prevent double submission
   const hasRunRef = useRef(false);
 
   const colorPalette = ['text-blue-600', 'text-green-600', 'text-orange-600', 'text-purple-600', 'text-teal-600', 'text-rose-600'];
@@ -36,17 +34,22 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
         const grade = await evaluateSession(config, messages, language);
         setResult(grade);
 
-        // Auto Save to DB if we have a task ID
         if (config.id) {
+          // Fetch student's current groups to tag the submission accurately
+          const currentGroups = await DbService.getGroupsForStudent(student.id);
+          const groupIds = currentGroups.map(g => g.id);
+
           await DbService.saveSubmission({
-            studentName: studentName,
-            studentId: studentId,
+            studentName: student.name,
+            studentId: student.id,
             taskId: config.id,
-            teacherId: config.creatorId || 'unknown', // Save the creatorId as teacherId
+            teacherId: config.creatorId || 'unknown',
             taskName: config.taskName,
             grade: grade,
             transcript: messages,
-            assets: initialAssets // Save the asset allocation
+            assets: initialAssets,
+            className: student.className || 'No Class',
+            groupIds: groupIds
           });
           setSaved(true);
         }
@@ -60,7 +63,6 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
     };
 
     runEvaluation();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); 
 
   if (loading) {
@@ -101,11 +103,9 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
   };
 
   return (
-    // Fixed container to handle scrolling independently of the main app container which might be overflow-hidden
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50 font-sans custom-scrollbar">
       <div className="min-h-full py-8 px-4">
-        <div className="max-w-5xl mx-auto space-y-6 pb-20"> {/* Added padding bottom to ensure scroll reach */}
-          {/* Header Card */}
+        <div className="max-w-5xl mx-auto space-y-6 pb-20">
           <div className="bg-slate-900 rounded-2xl shadow-xl overflow-hidden text-white relative">
             <div className="absolute top-0 right-0 p-8 opacity-10">
                 <Activity size={120} />
@@ -117,7 +117,7 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
                       <span className="text-xs font-bold uppercase tracking-wider">{t('eval.title')}</span>
                   </div>
                   <h1 className="text-2xl md:text-3xl font-bold mb-1">{config.taskName}</h1>
-                  <p className="text-slate-400 text-sm">Student: {studentName}</p>
+                  <p className="text-slate-400 text-sm">Student: {student.name}</p>
               </div>
               <div className="flex items-center gap-6">
                   <div className="text-right">
@@ -136,7 +136,6 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
             </div>
           </div>
 
-          {/* Asset Allocation Display (Dynamic) */}
           {initialAssets && Array.isArray(initialAssets) && (
              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  {initialAssets.map((section, sIdx) => (
@@ -161,7 +160,6 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
              </div>
           )}
 
-          {/* General Feedback */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
               <div className="flex items-center gap-3 mb-4">
                   <div className="p-2 bg-blue-50 rounded-lg text-blue-600">
@@ -174,7 +172,6 @@ export const EvaluationResult: React.FC<EvaluationResultProps> = ({ config, stud
               </p>
           </div>
 
-          {/* Detailed Breakdown */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="p-6 border-b border-slate-100 bg-slate-50">
                   <h2 className="text-lg font-bold text-slate-800">{t('eval.breakdown')}</h2>

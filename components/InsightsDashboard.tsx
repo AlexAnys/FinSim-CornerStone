@@ -1,46 +1,42 @@
-import React, { useState, useMemo } from 'react';
-import { TaskRecord, StudentSubmission, DimensionStat, EvidenceSnippet, InsightsSnapshot } from '../types';
+
+import React, { useState, useMemo, useEffect } from 'react';
+import { TaskRecord, StudentSubmission, DimensionStat, EvidenceSnippet, User } from '../types';
 import { useLanguage } from '../contexts/LanguageContext';
-import { RefreshCw, TrendingUp, AlertTriangle, FileText, PieChart, Filter, Users, Clock, CheckCircle, X, Loader2 } from 'lucide-react';
+import { RefreshCw, TrendingUp, AlertTriangle, FileText, PieChart, Filter, Users, Clock, CheckCircle, X, Loader2, Sparkles } from 'lucide-react';
 import { EvidenceDrawer } from './EvidenceDrawer';
 import { SubmissionDetailModal } from './SubmissionDetailModal';
 import { DbService } from '../services/dbService';
 
 interface InsightsDashboardProps {
-  user?: { id: string }; // Needed for creating groups
+  user: { id: string }; 
   tasks: TaskRecord[];
   submissions: StudentSubmission[];
+  allStudents?: User[]; // New: Pass student records for accurate class lookup
   onRefresh: () => void;
   loading: boolean;
 }
 
 type TimeRange = '7d' | '30d' | 'all';
 
-export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, tasks, submissions, onRefresh, loading }) => {
-  const { t } = useLanguage();
+export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, tasks, submissions, allStudents = [], onRefresh, loading }) => {
+  const { t, language } = useLanguage();
   const [timeRange, setTimeRange] = useState<TimeRange>('7d');
   const [selectedTaskId, setSelectedTaskId] = useState<string>('all');
 
-  // Drawer State
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTitle, setDrawerTitle] = useState('');
   const [drawerSubtitle, setDrawerSubtitle] = useState('');
   const [drawerEvidence, setDrawerEvidence] = useState<EvidenceSnippet[]>([]);
   const [drawerSubmission, setDrawerSubmission] = useState<StudentSubmission | undefined>(undefined);
 
-  // Detail Modal State
   const [viewingSubmission, setViewingSubmission] = useState<StudentSubmission | null>(null);
-
-  // Bucket Viewing State
   const [viewingBucket, setViewingBucket] = useState<{ label: string, submissions: StudentSubmission[] } | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
 
-  // 1. Unified Data Snapshot Generation
   const snapshot = useMemo(() => {
     const now = Date.now();
     let filtered = submissions;
 
-    // Time Filter
     if (timeRange === '7d') {
       const limit = now - 7 * 24 * 60 * 60 * 1000;
       filtered = filtered.filter(s => s.submittedAt >= limit);
@@ -49,12 +45,10 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
       filtered = filtered.filter(s => s.submittedAt >= limit);
     }
 
-    // Task Filter
     if (selectedTaskId !== 'all') {
       filtered = filtered.filter(s => s.taskId === selectedTaskId);
     }
 
-    // Deduplicate: Latest submission per student per task for Scoring stats
     const studentMap = new Map<string, StudentSubmission>();
     filtered.forEach(sub => {
         const existing = studentMap.get(sub.studentId);
@@ -66,11 +60,9 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
     const finalSubmissions = Array.from(studentMap.values());
     const studentCount = finalSubmissions.length;
     
-    // Overview Metrics
     const scores = finalSubmissions.map(s => s.grade.totalScore);
     const avgScore = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
     
-    // Detailed Buckets for Interaction
     const buckets = {
         '<60': [] as StudentSubmission[],
         '60-79': [] as StudentSubmission[],
@@ -92,12 +84,9 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
         buckets['90+'].length
     ];
 
-    // Recent Activity (use filtered raw list)
     const recentSubmissions = [...filtered].sort((a,b) => b.submittedAt - a.submittedAt).slice(0, 5);
 
-    // Calculate Dimension Stats (Module 1)
-    const dimMap = new Map<string, number[]>(); // Index -> Scores
-    
+    const dimMap = new Map<string, number[]>();
     finalSubmissions.forEach(sub => {
         sub.grade.breakdown.forEach((b, idx) => {
             const key = `D${idx + 1}`;
@@ -118,7 +107,7 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
 
         dimensionStats.push({
             id: key,
-            name: `Dimension ${key.substring(1)}`, // Placeholder name
+            name: `Dimension ${key.substring(1)}`,
             mean,
             p25,
             p75,
@@ -131,14 +120,12 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
         totalSubmissions: filtered.length,
         avgScore,
         scoreDist,
-        buckets, // Expose buckets
+        buckets,
         recentSubmissions,
         dimensionStats
     };
-
   }, [submissions, timeRange, selectedTaskId]);
 
-  // Actions
   const openEvidence = (title: string, subtitle: string, evidence: EvidenceSnippet[], sub?: StudentSubmission) => {
       setDrawerTitle(title);
       setDrawerSubtitle(subtitle);
@@ -153,45 +140,60 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
   };
 
   const handleCreateGroupFromBucket = async () => {
-      if (!viewingBucket || !user) return;
-      
-      const { label, submissions } = viewingBucket;
-      if (submissions.length === 0) return;
+    if (!viewingBucket || !user) return;
+    
+    const { label, submissions: bucketSubmissions } = viewingBucket;
+    if (bucketSubmissions.length === 0) return;
 
-      // Assume all belong to same class for now, or group by class logic
-      // Simplification: Take class from first student, or prompt.
-      // Better: Create a group for the majority class or simply "Mixed Class Group" if mixed.
-      
-      // Let's grab the class from the first student submission if available
-      const targetClass = submissions[0].className || "General";
-      
-      const groupName = `${targetClass} - Score ${label}`;
-      const studentIds = submissions.map(s => s.studentId);
-      const uniqueIds: string[] = Array.from(new Set(studentIds));
+    setCreatingGroup(true);
+    try {
+        // Issue Fix: Group students by their CURRENT class for data consistency
+        // Instead of relying on sub.className, we check allStudents for the latest profile
+        const classToStudents = new Map<string, string[]>();
+        
+        bucketSubmissions.forEach(sub => {
+            // Find current user profile to get latest class info
+            const currentProfile = allStudents.find(s => s.id === sub.studentId);
+            const cls = (currentProfile?.className || "").trim() || "No Class";
+            
+            const existing = classToStudents.get(cls) || [];
+            if (!existing.includes(sub.studentId)) {
+                existing.push(sub.studentId);
+            }
+            classToStudents.set(cls, existing);
+        });
 
-      setCreatingGroup(true);
-      try {
-          await DbService.createStudentGroup({
-              teacherId: user.id,
-              className: targetClass,
-              name: groupName,
-              type: 'auto-score-bucket',
-              studentIds: uniqueIds,
-              meta: { source: 'insights_click' }
-          });
-          alert(`Group "${groupName}" created successfully with ${uniqueIds.length} students.`);
-          setViewingBucket(null);
-      } catch (e) {
-          console.error(e);
-          alert('Failed to create group');
-      } finally {
-          setCreatingGroup(false);
-      }
+        const promises = Array.from(classToStudents.entries()).map(([className, studentIds]) => {
+            const groupName = language === 'zh' 
+              ? `分数区间 ${label} (${className})`
+              : `Score Range ${label} (${className})`;
+
+            return DbService.createStudentGroup({
+                teacherId: user.id,
+                className: className, // Ensure this matches the grouped Key
+                name: groupName,
+                type: 'auto-score-bucket',
+                studentIds: studentIds,
+                meta: { source: 'insights_score_distribution', range: label }
+            });
+        });
+
+        await Promise.all(promises);
+        alert(language === 'zh' 
+          ? `成功在 ${classToStudents.size} 个班级中创建了 ${promises.length} 个自动分组。` 
+          : `Successfully created ${promises.length} groups across ${classToStudents.size} classes.`);
+        
+        setViewingBucket(null);
+        onRefresh(); 
+    } catch (e) {
+        console.error(e);
+        alert('Failed to create groups');
+    } finally {
+        setCreatingGroup(false);
+    }
   };
 
-  // --- MODULE 1 RENDERERS ---
   const renderDimensionChart = () => {
-      // Find max mean to scale the chart, default to 20 if low data
       const maxMean = Math.max(...snapshot.dimensionStats.map(d => d.mean), 20); 
       
       return (
@@ -219,13 +221,11 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
                                    openEvidence(d.name, `Avg Score: ${d.mean.toFixed(1)}`, ev);
                                }}
                           >
-                              {/* Range Bar (P25-P75) - Background Shadow */}
                               <div 
                                  className="absolute w-8 bg-blue-100 rounded opacity-0 group-hover:opacity-100 transition-opacity z-0"
                                  style={{ bottom: `${hP25}%`, height: `${Math.max(hRange, 5)}%` }}
                                  title={`P25-P75: ${d.p25}-${d.p75}`}
                               ></div>
-                              {/* Mean Bar - Foreground */}
                               <div 
                                  className="w-6 bg-blue-500 rounded-t transition-all hover:bg-blue-600 relative z-10"
                                  style={{ height: `${hMean}%` }}
@@ -245,7 +245,6 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
 
   return (
     <div className="max-w-6xl mx-auto pb-24">
-      {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
@@ -266,7 +265,6 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
         </button>
       </div>
 
-      {/* Filter Bar */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6 flex flex-col md:flex-row gap-4 items-center">
          <div className="relative w-full md:w-64">
              <Filter size={16} className="absolute left-3 top-3 text-slate-400" />
@@ -301,7 +299,6 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
          </div>
       </div>
 
-      {/* --- OVERVIEW SECTION --- */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           <div className="bg-blue-50 p-6 rounded-xl border border-blue-100 flex items-center justify-between">
               <div>
@@ -333,7 +330,6 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          {/* --- SCORE DISTRIBUTION --- */}
           <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
              <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
                  <TrendingUp size={18} className="text-blue-500" />
@@ -370,7 +366,6 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
              </div>
           </div>
 
-          {/* --- AT RISK STUDENTS --- */}
           <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col">
              <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
                  <AlertTriangle size={18} className="text-red-500" />
@@ -405,7 +400,6 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
           </div>
       </div>
 
-      {/* --- MODULE 1: DIMENSION DISTRIBUTION --- */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
               <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -430,12 +424,11 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                           {snapshot.dimensionStats
-                              .sort((a,b) => a.mean - b.mean) // Weakest first
+                              .sort((a,b) => a.mean - b.mean) 
                               .slice(0, 5)
                               .map(d => (
                               <tr key={d.id} className="group hover:bg-orange-50 cursor-pointer transition-colors"
                                   onClick={() => {
-                                      // Click row to open evidence
                                       const ev = submissions
                                         .filter(s => {
                                             const score = s.grade.breakdown[parseInt(d.id.substring(1))-1]?.score || 0;
@@ -444,7 +437,7 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
                                         .slice(0,3)
                                         .map(s => ({
                                             studentName: s.studentName,
-                                            quote: "Weakness evidence placeholder...",
+                                            quote: s.grade.breakdown[parseInt(d.id.substring(1))-1]?.comment || "Weakness evidence placeholder...",
                                             context: `Low Score in ${d.id}`,
                                             type: 'negative'
                                         } as EvidenceSnippet));
@@ -467,7 +460,6 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
           </div>
       </div>
       
-      {/* Recent Activity Section */}
       <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
               <Clock size={18} className="text-slate-500" />
@@ -500,7 +492,6 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
           </div>
       </div>
 
-      {/* Bucket View Modal */}
       {viewingBucket && (
           <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-xl shadow-xl w-full max-w-lg flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95 duration-200">
@@ -520,7 +511,9 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
                                   </div>
                                   <div>
                                       <div className="text-sm font-bold text-slate-700">{sub.studentName}</div>
-                                      <div className="text-xs text-slate-400">{sub.className || 'No Class'}</div>
+                                      <div className="text-xs text-slate-400">
+                                          {allStudents.find(s => s.id === sub.studentId)?.className || sub.className || 'No Class'}
+                                      </div>
                                   </div>
                               </div>
                               <div className="font-bold text-slate-800">{sub.grade.totalScore}</div>
@@ -534,14 +527,13 @@ export const InsightsDashboard: React.FC<InsightsDashboardProps> = ({ user, task
                           className="flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-purple-700 disabled:opacity-50"
                       >
                           {creatingGroup ? <Loader2 className="animate-spin" size={16} /> : <Users size={16} />}
-                          Create Sub-Group
+                          {language === 'zh' ? '一键生成 Sub-Group' : 'Create Sub-Groups'}
                       </button>
                   </div>
               </div>
           </div>
       )}
 
-      {/* Evidence Drawer Component */}
       <EvidenceDrawer 
          isOpen={drawerOpen}
          onClose={() => setDrawerOpen(false)}

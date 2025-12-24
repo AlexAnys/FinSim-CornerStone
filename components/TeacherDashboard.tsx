@@ -9,7 +9,7 @@ import { ChatInterface } from './ChatInterface';
 import { EvaluationResult } from './EvaluationResult';
 import { InsightsDashboard } from './InsightsDashboard';
 import { ClassesGroupsManager } from './ClassesGroupsManager';
-import { Plus, Edit, Trash2, BarChart2, Users, FileText, Loader2, Sparkles, RefreshCw, Save, Clock, Eye, Play, PieChart, ArrowRight, Quote, Grid, X, Menu, LogOut, Download, AlertTriangle, Target, Send, GraduationCap, Filter } from 'lucide-react';
+import { Plus, Edit, Trash2, BarChart2, Users, FileText, Loader2, Sparkles, RefreshCw, Save, Clock, Eye, Play, PieChart, ArrowRight, Quote, Grid, X, Menu, LogOut, Download, AlertTriangle, Target, Send, GraduationCap, Filter, CheckCircle } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { EvidenceDrawer } from './EvidenceDrawer';
 
@@ -28,11 +28,15 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
   // Data State
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [submissions, setSubmissions] = useState<StudentSubmission[]>([]);
-  const [assignments, setAssignments] = useState<TaskAssignment[]>([]); // New
-  const [groups, setGroups] = useState<StudentGroup[]>([]); // New
-  const [allStudents, setAllStudents] = useState<User[]>([]); // Added for class derivation
+  const [assignments, setAssignments] = useState<TaskAssignment[]>([]);
+  const [groups, setGroups] = useState<StudentGroup[]>([]);
+  const [allStudents, setAllStudents] = useState<User[]>([]);
   const [loadingData, setLoadingData] = useState(false);
   const [seeding, setSeeding] = useState(false);
+
+  // Persistence State for Classes tab
+  const [selectedClass, setSelectedClass] = useState<string | null>(null);
+  const [classViewFilter, setClassViewFilter] = useState<'all' | 'ungrouped'>('all');
 
   // UI State
   const [isEditing, setIsEditing] = useState(false);
@@ -46,7 +50,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
 
   // Result Filter State
   const [resultFilterAssignment, setResultFilterAssignment] = useState<string>('all');
-  const [resultScoreFilter, setResultScoreFilter] = useState<string | null>(null); // New: Filter by score range click
+  const [resultScoreFilter, setResultScoreFilter] = useState<string | null>(null); 
   
   // Analysis Filter State
   const [analysisTaskId, setAnalysisTaskId] = useState<string>('all');
@@ -76,13 +80,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
   // Modal State
   const [selectedSubmission, setSelectedSubmission] = useState<StudentSubmission | null>(null);
 
-  // Evidence Drawer in Report Center (Prompt 3 & 7)
+  // Evidence Drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTitle, setDrawerTitle] = useState('');
   const [drawerEvidence, setDrawerEvidence] = useState<any[]>([]);
 
   useEffect(() => {
-    refreshData();
+    refreshData(true);
   }, [user.id]); 
 
   useEffect(() => {
@@ -91,15 +95,15 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
       }
   }, [activeTab]);
 
-  const refreshData = async () => {
-    setLoadingData(true);
+  const refreshData = async (initial = false) => {
+    if (initial) setLoadingData(true);
     try {
         const [loadedTasks, loadedSubmissions, loadedAssignments, loadedGroups, loadedStudents] = await Promise.all([
             DbService.getTasks(user.id),
             DbService.getSubmissionsForTeacher(user.id),
             DbService.getAssignmentsForTeacher(user.id),
             DbService.getGroupsByTeacher(user.id),
-            DbService.getAllStudents() // Fetch all students for robust class list
+            DbService.getAllStudents()
         ]);
         setTasks(loadedTasks);
         setSubmissions(loadedSubmissions);
@@ -109,7 +113,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
     } catch (error) {
         console.error("Failed to load dashboard data", error);
     } finally {
-        setLoadingData(false);
+        if (initial) setLoadingData(false);
     }
   };
 
@@ -177,13 +181,14 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
           await DbService.createAssignment({
               taskId: isPublishing.id,
               teacherId: user.id,
+              teacherName: user.name, // Added user.name here
               className: publishClass,
-              groupIds: Array.from(publishSelectedGroups),
+              groupIds: publishGroupMode === 'select' ? Array.from(publishSelectedGroups) : [],
               title: `${isPublishing.taskName} - ${publishClass}`,
           });
           alert(t('assign.success'));
           setIsPublishing(null);
-          refreshData(); // Refresh assignments list
+          refreshData(); 
       } catch (e) {
           console.error(e);
           alert('Failed to publish');
@@ -194,7 +199,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
     setAnalyzing(true);
     setAnalysisReport(null);
     
-    // Filter by Task
     let dataToAnalyze = submissions;
     if (analysisTaskId !== 'all') {
         dataToAnalyze = dataToAnalyze.filter(s => s.taskId === analysisTaskId);
@@ -280,29 +284,24 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
       setDrawerOpen(true);
   };
 
-  // Helper: Get Unique Classes from Groups/Assignments data or assume teacher knows
   const availableClasses = useMemo(() => {
       const classes = new Set<string>();
       allStudents.forEach(s => {
           if (s.className) classes.add(s.className);
       });
-      // Also check groups/assignments as backup
       groups.forEach(g => classes.add(g.className));
       assignments.forEach(a => classes.add(a.className)); 
       return Array.from<string>(classes).sort();
   }, [allStudents, groups, assignments]);
 
-  // Available groups for selected publish class
   const availablePublishGroups = useMemo(() => {
       if (!publishClass) return [];
       return groups.filter(g => g.className === publishClass);
   }, [publishClass, groups]);
 
-  // -- Result Filtering Logic --
   const filteredSubmissions = useMemo(() => {
       let filtered = submissions;
 
-      // 1. Filter by Assignment
       if (resultFilterAssignment !== 'all') {
           const assignment = assignments.find(a => a.id === resultFilterAssignment);
           if (assignment) {
@@ -318,7 +317,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
           }
       }
 
-      // 2. Filter by Score Range Click
       if (resultScoreFilter) {
           filtered = filtered.filter(s => {
               const score = s.grade.totalScore;
@@ -333,7 +331,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
       return filtered;
   }, [submissions, resultFilterAssignment, assignments, resultScoreFilter]);
 
-  // Score Distribution for filtered Results
   const scoreDistribution = useMemo(() => {
       let baseFiltered = submissions;
       if (resultFilterAssignment !== 'all') {
@@ -351,7 +348,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
           }
       }
 
-      const dist = [0, 0, 0, 0]; // <60, 60-79, 80-89, 90+
+      const dist = [0, 0, 0, 0]; 
       baseFiltered.forEach(s => {
           if (s.grade.totalScore < 60) dist[0]++;
           else if (s.grade.totalScore < 80) dist[1]++;
@@ -374,10 +371,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
 
       for (const range of ranges) {
           const studentIds = filteredSubmissions
-              .filter(s => s.grade.totalScore >= range.min && s.grade.totalScore < range.max) // Upper bound exclusive except 100 handled loosely
+              .filter(s => s.grade.totalScore >= range.min && s.grade.totalScore < range.max) 
               .map(s => s.studentId);
           
-          // Add students with exactly 100 to last bucket
           if (range.max === 100) {
               const perfectScorers = filteredSubmissions.filter(s => s.grade.totalScore === 100).map(s => s.studentId);
               studentIds.push(...perfectScorers);
@@ -408,14 +404,12 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
           }
           alert(t('auto.success'));
           setShowAutoGroupModal(false);
-          refreshData(); // Reload groups
+          refreshData(); 
       } catch (e) {
           console.error(e);
           alert('Error creating groups');
       }
   };
-
-  // RENDER MODES
 
   if (isEditing) {
     return (
@@ -444,8 +438,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
         return (
             <EvaluationResult
                 config={testConfig}
-                studentName={`${user.name} (Test)`}
-                studentId={user.id}
+                student={user}
                 messages={testState.messages}
                 initialAssets={testState.assets}
                 onRestart={handleTestExit}
@@ -454,7 +447,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
     }
   }
 
-  // Main Dashboard
   return (
     <div className="h-screen bg-slate-50 flex flex-col md:flex-row relative overflow-hidden">
       
@@ -538,7 +530,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
         </div>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-auto p-4 md:p-8 w-full custom-scrollbar">
         {loadingData ? (
              <div className="flex items-center justify-center h-full">
@@ -606,519 +597,457 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
                         </div>
                     </div>
                 )}
-
+                
                 {/* --- RESULTS TAB --- */}
                 {activeTab === 'results' && (
-                    <div className="max-w-6xl mx-auto">
-                        <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-2xl font-bold text-slate-800">{t('dash.results')}</h2>
-                            <div className="flex gap-4 items-center">
-                                {/* Assignment Filter */}
-                                <select 
-                                    value={resultFilterAssignment}
-                                    onChange={(e) => { setResultFilterAssignment(e.target.value); setResultScoreFilter(null); }}
-                                    className="bg-white border border-slate-200 text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                    <option value="all">All Assignments</option>
-                                    {assignments.map(a => {
-                                        const taskName = tasks.find(t => t.id === a.taskId)?.taskName || 'Unknown Task';
-                                        return <option key={a.id} value={a.id}>{a.title || `${taskName} - ${a.className}`}</option>
-                                    })}
-                                </select>
-                                <button onClick={handleClearSubmissions} className="text-red-500 text-sm hover:underline border px-2 py-1 rounded hover:bg-red-50">Clear All</button>
-                            </div>
-                        </div>
+                  <div className="max-w-6xl mx-auto animate-in fade-in slide-in-from-right-4 duration-300">
+                      <div className="flex justify-between items-center mb-6">
+                          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Users className="text-blue-500"/> {t('dash.results')}</h2>
+                          <div className="flex gap-2">
+                               <button onClick={handleClearSubmissions} className="text-red-500 text-sm hover:bg-red-50 px-3 py-2 rounded-lg transition-colors border border-transparent hover:border-red-100 flex items-center gap-2">
+                                   <Trash2 size={16} /> Clear All
+                               </button>
+                               <button 
+                                  onClick={() => setShowAutoGroupModal(true)}
+                                  disabled={filteredSubmissions.length === 0}
+                                  className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-purple-700 shadow-sm flex items-center gap-2 disabled:opacity-50"
+                              >
+                                  <Sparkles size={16} /> {t('auto.btn')}
+                              </button>
+                          </div>
+                      </div>
+                      
+                      {/* Filters */}
+                      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6 flex flex-wrap gap-4 items-center">
+                          {/* Assignment Filter */}
+                          <div className="flex items-center gap-2">
+                              <Filter size={16} className="text-slate-400" />
+                              <select 
+                                  value={resultFilterAssignment} 
+                                  onChange={(e) => setResultFilterAssignment(e.target.value)}
+                                  className="bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+                              >
+                                  <option value="all">All Assignments & Classes</option>
+                                  {assignments.map(a => (
+                                      <option key={a.id} value={a.id}>
+                                          {a.title || `Task in ${a.className}`}
+                                      </option>
+                                  ))}
+                              </select>
+                          </div>
+                           {/* Score Filter */}
+                           <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-slate-500">Score:</span>
+                              <div className="flex bg-slate-100 p-1 rounded-lg">
+                                  {['<60', '60-79', '80-89', '90+'].map(range => (
+                                      <button 
+                                          key={range}
+                                          onClick={() => setResultScoreFilter(resultScoreFilter === range ? null : range)}
+                                          className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${resultScoreFilter === range ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                      >
+                                          {range}
+                                      </button>
+                                  ))}
+                              </div>
+                          </div>
+                          <div className="ml-auto text-sm text-slate-500">
+                              Showing <span className="font-bold text-slate-800">{filteredSubmissions.length}</span> submissions
+                          </div>
+                      </div>
 
-                        {/* Interactive Stats Bar for filtered results */}
-                        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm mb-6">
-                            <div className="flex justify-between items-center mb-6">
-                                <div className="flex items-baseline gap-2">
-                                    <h3 className="font-bold text-slate-800 text-lg">学生成绩 (Submissions)</h3>
-                                    <span className="text-2xl font-bold text-slate-900">{scoreDistribution.total}</span>
-                                </div>
-                                {resultFilterAssignment !== 'all' && (
-                                    <button 
-                                        onClick={() => setShowAutoGroupModal(true)}
-                                        className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition-colors"
-                                    >
-                                        <Users size={16} /> {t('auto.btn')}
-                                    </button>
-                                )}
-                            </div>
+                      {/* Table */}
+                      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                          <table className="w-full text-left text-sm">
+                              <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 font-bold">
+                                  <tr>
+                                      <th className="px-6 py-4">Student</th>
+                                      <th className="px-6 py-4">Task</th>
+                                      <th className="px-6 py-4">Class</th>
+                                      <th className="px-6 py-4 text-right">Score</th>
+                                      <th className="px-6 py-4 text-right">Date</th>
+                                      <th className="px-6 py-4"></th>
+                                  </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                  {filteredSubmissions.map(sub => (
+                                      <tr key={sub.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer" onClick={() => setSelectedSubmission(sub)}>
+                                          <td className="px-6 py-4 font-medium text-slate-900 flex items-center gap-3">
+                                              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-xs">{sub.studentName[0]}</div>
+                                              {sub.studentName}
+                                          </td>
+                                          <td className="px-6 py-4 text-slate-600">{sub.taskName}</td>
+                                          <td className="px-6 py-4 text-slate-500">{sub.className || 'N/A'}</td>
+                                          <td className="px-6 py-4 text-right font-bold text-slate-800">{sub.grade.totalScore}</td>
+                                          <td className="px-6 py-4 text-right text-slate-400 text-xs">{new Date(sub.submittedAt).toLocaleDateString()}</td>
+                                          <td className="px-6 py-4 text-right">
+                                              <button onClick={(e) => handleDeleteSubmission(sub.id, e)} className="p-2 text-slate-300 hover:text-red-500 transition-colors">
+                                                  <Trash2 size={16} />
+                                              </button>
+                                          </td>
+                                      </tr>
+                                  ))}
+                                  {filteredSubmissions.length === 0 && (
+                                      <tr>
+                                          <td colSpan={6} className="px-6 py-12 text-center text-slate-400">No submissions found matching filters.</td>
+                                      </tr>
+                                  )}
+                              </tbody>
+                          </table>
+                      </div>
+                  </div>
+                )}
 
-                            <div className="flex items-end gap-6 h-32 px-4">
-                                {['<60', '60-79', '80-89', '90+'].map((label, idx) => {
-                                    const count = scoreDistribution.dist[idx];
-                                    const maxVal = Math.max(...scoreDistribution.dist, 1);
-                                    const heightPct = (count / maxVal) * 100;
-                                    const colors = ['bg-red-400', 'bg-yellow-400', 'bg-blue-400', 'bg-emerald-400'];
-                                    const isActive = resultScoreFilter === label;
-                                    
-                                    return (
-                                        <div 
-                                            key={label} 
-                                            className={`flex-1 flex flex-col items-center group h-full justify-end cursor-pointer relative transition-all ${isActive ? 'opacity-100 scale-105' : resultScoreFilter ? 'opacity-40' : 'opacity-100'}`}
-                                            onClick={() => setResultScoreFilter(resultScoreFilter === label ? null : label)}
-                                        >
-                                            <div className="w-full relative flex flex-col justify-end items-center h-full">
-                                                <div 
-                                                    className={`w-full max-w-[60px] rounded-t-lg transition-all duration-500 ${colors[idx]} ${isActive ? 'opacity-100 ring-2 ring-offset-2 ring-blue-200' : 'opacity-80 group-hover:opacity-100'} relative`}
-                                                    style={{ height: `${Math.max(heightPct, 2)}%` }}
-                                                >
-                                                    <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-slate-600">{count}</span>
-                                                </div>
-                                            </div>
-                                            <div className="mt-2 text-xs font-medium text-slate-500 border-t border-slate-100 w-full text-center pt-2">
-                                                {label}
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>
-                            
-                            {resultScoreFilter && (
-                                <div className="mt-4 flex justify-center">
-                                    <button 
-                                        onClick={() => setResultScoreFilter(null)}
-                                        className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1"
-                                    >
-                                        <X size={12} /> Clear Filter
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
-                            <table className="w-full text-sm text-left min-w-[600px]">
-                                <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
-                                    <tr>
-                                        <th className="px-6 py-4">Name</th>
-                                        <th className="px-6 py-4">Task</th>
-                                        <th className="px-6 py-4">Class</th>
-                                        <th className="px-6 py-4">Time</th>
-                                        <th className="px-6 py-4 text-right">Score</th>
-                                        <th className="px-6 py-4 text-center">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {filteredSubmissions.length === 0 ? (
-                                        <tr>
-                                            <td colSpan={6} className="px-6 py-8 text-center text-slate-400">No Data</td>
-                                        </tr>
-                                    ) : (
-                                        filteredSubmissions.slice().reverse().map(sub => (
-                                            <tr 
-                                                key={sub.id} 
-                                                className="hover:bg-slate-50 transition-colors cursor-pointer"
-                                                onClick={() => setSelectedSubmission(sub)}
-                                            >
-                                                <td className="px-6 py-4 font-medium text-slate-900">{sub.studentName}</td>
-                                                <td className="px-6 py-4 text-slate-600 max-w-[150px] truncate" title={sub.taskName}>{sub.taskName}</td>
-                                                <td className="px-6 py-4 text-slate-500 text-xs">{sub.className || '-'}</td>
-                                                <td className="px-6 py-4 text-slate-500">{new Date(sub.submittedAt).toLocaleDateString()}</td>
-                                                <td className="px-6 py-4 text-right">
-                                                    <span className={`font-bold ${sub.grade.totalScore >= sub.grade.maxScore * 0.8 ? 'text-green-600' : (sub.grade.totalScore < sub.grade.maxScore * 0.6 ? 'text-red-500' : 'text-yellow-600')}`}>
-                                                        {sub.grade.totalScore}
-                                                    </span>
-                                                    <span className="text-slate-400"> / {sub.grade.maxScore}</span>
-                                                </td>
-                                                <td className="px-6 py-4 flex justify-center items-center gap-3">
-                                                    <button 
-                                                        onClick={(e) => { e.stopPropagation(); setSelectedSubmission(sub); }}
-                                                        className="text-blue-600 hover:text-blue-800 font-medium text-xs border border-blue-200 px-2 py-1 rounded bg-blue-50"
-                                                    >
-                                                        View
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => handleDeleteSubmission(sub.id, e)}
-                                                        className="text-slate-400 hover:text-red-500 transition-colors p-1"
-                                                        title="Delete Record"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
+                {/* --- INSIGHTS TAB --- */}
+                {activeTab === 'insights' && (
+                    <div className="animate-in fade-in slide-in-from-right-4 duration-300">
+                        <InsightsDashboard 
+                            user={user}
+                            tasks={tasks}
+                            submissions={submissions}
+                            allStudents={allStudents}
+                            onRefresh={() => refreshData()}
+                            loading={loadingData}
+                        />
                     </div>
                 )}
-                
-                {activeTab === 'insights' && (
-                    <InsightsDashboard 
-                        user={user}
-                        tasks={tasks}
-                        submissions={submissions}
-                        onRefresh={refreshData}
-                        loading={loadingData}
-                    />
-                )}
-                
+
+                {/* --- ANALYSIS TAB --- */}
                 {activeTab === 'analysis' && (
-                    <div className="max-w-6xl mx-auto pb-20">
-                         {/* Header */}
-                         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-                            <div>
-                                <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                                     <Sparkles className="text-purple-500" />
-                                     {t('dash.analysis')}
-                                </h2>
-                                <p className="text-slate-500 text-sm mt-1">Generate comprehensive reports and archive snapshots</p>
-                            </div>
-                         </div>
-                            
-                            {/* Generator Card */}
-                            <div className="flex flex-col gap-4 w-full bg-white p-6 rounded-xl border border-slate-200 shadow-sm mb-6">
-                                <div className="flex gap-4 items-center">
-                                    <div className="relative flex-1">
-                                        <Filter size={16} className="absolute left-3 top-3.5 text-slate-400" />
-                                        <select 
-                                            value={analysisTaskId}
-                                            onChange={(e) => setAnalysisTaskId(e.target.value)}
-                                            className="w-full pl-9 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 outline-none focus:ring-2 focus:ring-purple-500/20"
-                                        >
-                                            <option value="all">{t('insights.all_tasks')}</option>
-                                            {tasks.map(task => (
-                                                <option key={task.id} value={task.id}>
-                                                    {task.taskName.length > 40 ? task.taskName.substring(0,40) + '...' : task.taskName}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                    <label className="flex items-center gap-2 text-sm text-slate-700 bg-slate-50 border border-slate-200 px-4 py-3 rounded-lg cursor-pointer hover:bg-slate-100 transition-colors select-none">
-                                        <input 
+                    <div className="max-w-4xl mx-auto animate-in fade-in slide-in-from-right-4 duration-300">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><BarChart2 className="text-blue-500"/> {t('dash.analysis')}</h2>
+                            <button 
+                                onClick={handleGenerateAnalysis}
+                                disabled={analyzing}
+                                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg text-sm font-bold transition-all shadow-lg shadow-blue-500/20 disabled:opacity-70"
+                            >
+                                {analyzing ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}
+                                {t('dash.generate')}
+                            </button>
+                        </div>
+
+                        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm mb-8">
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                 <div>
+                                     <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">{t('insights.select_task')}</label>
+                                     <select 
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
+                                        value={analysisTaskId}
+                                        onChange={(e) => setAnalysisTaskId(e.target.value)}
+                                     >
+                                         <option value="all">{t('insights.all_tasks')}</option>
+                                         {tasks.map(t => <option key={t.id} value={t.id}>{t.taskName}</option>)}
+                                     </select>
+                                 </div>
+                                 <div className="flex items-center">
+                                     <label className="flex items-center gap-3 cursor-pointer group">
+                                         <input 
                                             type="checkbox" 
-                                            checked={analyzeBestOnly}
+                                            checked={analyzeBestOnly} 
                                             onChange={(e) => setAnalyzeBestOnly(e.target.checked)}
-                                            className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500 border-gray-300"
-                                        />
-                                        <span className="font-medium whitespace-nowrap">{t('dash.analyze_best')}</span>
-                                    </label>
+                                            className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer" 
+                                         />
+                                         <span className="text-sm font-medium text-slate-600 group-hover:text-slate-900 transition-colors">{t('dash.analyze_best')}</span>
+                                     </label>
+                                 </div>
+                             </div>
+                        </div>
+
+                        {analyzing && (
+                            <div className="text-center py-12">
+                                <Loader2 className="animate-spin text-blue-500 w-12 h-12 mx-auto mb-4" />
+                                <p className="text-slate-500 animate-pulse">{t('dash.analyzing', { count: currentAnalysisCount })}</p>
+                            </div>
+                        )}
+
+                        {analysisReport && !analyzing && (
+                            <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+                                <div className="bg-white p-8 rounded-xl border border-blue-100 shadow-xl shadow-blue-500/5 relative overflow-hidden">
+                                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-500"></div>
+                                    <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                        <FileText className="text-blue-500" /> {t('dash.summary')}
+                                    </h3>
+                                    <p className="text-slate-600 leading-relaxed whitespace-pre-line">{analysisReport.overallSummary}</p>
+                                    
+                                    <div className="mt-6 flex flex-wrap gap-2">
+                                        {analysisReport.keyWeaknesses.map((w, i) => (
+                                            <span key={i} className="px-3 py-1 bg-red-50 text-red-700 text-xs rounded-full border border-red-100 font-medium">{w}</span>
+                                        ))}
+                                    </div>
+
+                                    <div className="mt-6 pt-6 border-t border-slate-100 flex justify-between items-center">
+                                        <div className="text-xs text-slate-400">
+                                            {t('dash.based_on', { count: currentAnalysisCount })}
+                                        </div>
+                                        <button onClick={handleSaveAnalysis} className="text-blue-600 text-sm font-bold hover:underline flex items-center gap-1">
+                                            <Save size={16} /> {t('dash.save')}
+                                        </button>
+                                    </div>
                                 </div>
 
-                                <button 
-                                    onClick={handleGenerateAnalysis}
-                                    disabled={analyzing}
-                                    className="flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:bg-slate-300 text-white px-5 py-3 rounded-lg font-bold transition-all shadow-sm active:translate-y-0.5 hover:shadow-purple-500/20 w-full"
-                                >
-                                    {analyzing ? <Loader2 className="animate-spin" size={18} /> : <RefreshCw size={18} />}
-                                    {analysisReport ? t('dash.regenerate') : t('dash.generate')}
-                                </button>
-                            </div>
-                        
-                        {/* Saved Reports List */}
-                        {savedReports.length > 0 && !analysisReport && (
-                             <div className="mb-6 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                                <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
-                                    <Clock size={16} className="text-slate-500" />
-                                    <h3 className="font-bold text-slate-700 text-sm">{t('dash.saved_reports')}</h3>
-                                </div>
-                                <div className="max-h-60 overflow-y-auto p-4 space-y-3">
-                                    {savedReports.map(report => (
-                                        <div key={report.id} className="flex justify-between items-center p-4 border border-slate-100 rounded-xl hover:border-blue-200 hover:bg-blue-50/30 transition-all bg-white shadow-sm">
-                                            <div className="flex flex-col gap-1">
-                                                <span className="font-bold text-slate-800 text-sm">
-                                                    {t('dash.generated_on')} {new Date(report.createdAt).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US')}
-                                                </span>
-                                                <span className="text-xs text-slate-500">
-                                                    {t('dash.based_on', { count: report.studentCount })}
-                                                </span>
+                                <div className="grid md:grid-cols-2 gap-6">
+                                    {analysisReport.groups.map((group, idx) => (
+                                        <div key={idx} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <h4 className="font-bold text-slate-800 text-lg">{group.label}</h4>
+                                                <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${
+                                                    group.level === 'high' ? 'bg-emerald-100 text-emerald-700' :
+                                                    group.level === 'medium' ? 'bg-yellow-100 text-yellow-700' : 
+                                                    'bg-red-100 text-red-700'
+                                                }`}>{group.level}</span>
                                             </div>
-                                            <div className="flex gap-3 items-center">
-                                                <button 
-                                                    onClick={() => handleViewSavedAnalysis(report)}
-                                                    className="flex items-center gap-1.5 text-xs font-bold text-blue-600 bg-blue-100 px-4 py-2 rounded-lg hover:bg-blue-200 transition-colors"
-                                                >
-                                                    <Eye size={14} /> {t('dash.view')}
+                                            <p className="text-sm text-slate-500 mb-4 h-10 line-clamp-2">{group.characteristics}</p>
+                                            
+                                            <div className="space-y-3">
+                                                <div className="bg-slate-50 p-3 rounded-lg">
+                                                    <div className="text-xs font-bold text-slate-400 uppercase mb-1">{t('dash.mastered')}</div>
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {group.masteredKnowledge.slice(0,3).map((k,i) => (
+                                                            <span key={i} className="text-[10px] px-1.5 py-0.5 bg-white border border-slate-200 rounded text-slate-600">{k}</span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                <div className="bg-slate-50 p-3 rounded-lg">
+                                                    <div className="text-xs font-bold text-slate-400 uppercase mb-1">{t('dash.suggestions')}</div>
+                                                    <p className="text-xs text-slate-600 italic">"{group.suggestion}"</p>
+                                                </div>
+                                                <div className="pt-2 flex -space-x-2 overflow-hidden">
+                                                    {group.studentNames.slice(0,5).map((name, i) => (
+                                                        <div key={i} className="w-6 h-6 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center text-[8px] font-bold text-blue-600" title={name}>
+                                                            {name[0]}
+                                                        </div>
+                                                    ))}
+                                                    {group.studentNames.length > 5 && (
+                                                        <div className="w-6 h-6 rounded-full bg-slate-100 border-2 border-white flex items-center justify-center text-[8px] font-bold text-slate-500">
+                                                            +{group.studentNames.length - 5}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                
+                                {analysisReport.evidenceSnippets && analysisReport.evidenceSnippets.length > 0 && (
+                                    <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                                                <Quote className="text-orange-500" size={18} /> {t('dash.evidence')}
+                                            </h3>
+                                            <button 
+                                                onClick={() => openReportEvidence("Evidence Snippets", analysisReport.evidenceSnippets)}
+                                                className="text-sm text-blue-600 font-bold hover:underline"
+                                            >
+                                                View All
+                                            </button>
+                                        </div>
+                                        <div className="grid md:grid-cols-2 gap-4">
+                                            {analysisReport.evidenceSnippets.slice(0, 2).map((ev, i) => (
+                                                <div key={i} className="bg-slate-50 p-4 rounded-lg border border-slate-100 text-sm italic text-slate-600">
+                                                    "{ev.quote}"
+                                                    <div className="mt-2 text-xs font-bold text-slate-400 not-italic flex justify-between">
+                                                        <span>— {ev.studentName}</span>
+                                                        <span className={ev.type === 'positive' ? 'text-green-500' : 'text-red-500'}>{ev.type}</span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="mt-12">
+                            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                <Clock size={18} className="text-slate-400"/> {t('dash.saved_reports')}
+                            </h3>
+                            <div className="space-y-3">
+                                {savedReports.length === 0 ? (
+                                    <div className="text-center py-8 text-slate-400 text-sm bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                                        No saved reports found.
+                                    </div>
+                                ) : (
+                                    savedReports.map(report => (
+                                        <div key={report.id} className="bg-white p-4 rounded-xl border border-slate-200 flex justify-between items-center hover:shadow-md transition-all cursor-pointer" onClick={() => handleViewSavedAnalysis(report)}>
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-500">
+                                                    <FileText size={20} />
+                                                </div>
+                                                <div>
+                                                    <div className="font-bold text-slate-800">{t('dash.generated_on')} {new Date(report.createdAt).toLocaleDateString()}</div>
+                                                    <div className="text-xs text-slate-500">{t('dash.based_on', { count: report.studentCount })}</div>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                <button className="text-sm font-bold text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors">
+                                                    {t('dash.view')}
                                                 </button>
                                                 <button 
                                                     onClick={(e) => handleDeleteSavedAnalysis(report.id, e)}
-                                                    className="text-slate-400 hover:text-red-500 p-2 hover:bg-red-50 rounded-lg transition-colors"
+                                                    className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                                                 >
                                                     <Trash2 size={16} />
                                                 </button>
                                             </div>
                                         </div>
-                                    ))}
-                                </div>
-                             </div>
-                        )}
-
-                        {/* REPORT VIEW */}
-                        {analysisReport && (
-                            <div className="animate-in slide-in-from-bottom-4 duration-300 space-y-6">
-                                {/* Actions & Summary */}
-                                <div className="bg-white p-6 rounded-xl border border-purple-100 shadow-sm relative overflow-hidden">
-                                     <div className="flex justify-between items-start mb-4">
-                                        <div>
-                                            <h3 className="font-bold text-xl text-slate-800 flex items-center gap-2">
-                                                <Sparkles className="text-purple-500" /> {t('dash.summary')}
-                                            </h3>
-                                            <p className="text-xs text-slate-500 mt-1">
-                                                {t('dash.generated_on')} {new Date().toLocaleDateString()}
-                                            </p>
-                                        </div>
-                                        <div className="flex gap-2">
-                                            <button 
-                                                onClick={() => setActiveTab('insights')}
-                                                className="flex items-center gap-1.5 text-xs font-bold text-blue-600 bg-blue-50 border border-blue-200 px-3 py-2 rounded-lg hover:bg-blue-100 transition-colors"
-                                            >
-                                                {t('dash.go_insights')} <ArrowRight size={14} />
-                                            </button>
-                                            <button 
-                                                onClick={handleSaveAnalysis}
-                                                className="flex items-center gap-1.5 text-xs font-bold text-white bg-slate-900 px-3 py-2 rounded-lg hover:bg-slate-800 transition-colors"
-                                            >
-                                                <Save size={14} /> {t('dash.save')}
-                                            </button>
-                                        </div>
-                                     </div>
-                                     <div className="p-4 bg-slate-50 rounded-lg text-slate-700 leading-relaxed border-l-4 border-purple-400 text-sm">
-                                         {analysisReport.overallSummary}
-                                     </div>
-                                </div>
-
-                                {/* STUDENT CLUSTERING (Advanced Analysis) */}
-                                {analysisReport.groups && analysisReport.groups.length > 0 && (
-                                  <div className="mb-6">
-                                    <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                                       <Users size={18} className="text-blue-500" />
-                                       {t('dash.clustering')}
-                                    </h3>
-                                    <div className="grid md:grid-cols-3 gap-4">
-                                       {analysisReport.groups.map((group, idx) => (
-                                          <div key={idx} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-                                              <div className="flex justify-between items-start mb-3">
-                                                  <div className="font-bold text-lg text-slate-800">{group.label}</div>
-                                                  <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded font-bold">{group.averageScore.toFixed(1)} Avg</span>
-                                              </div>
-                                              <div className="text-xs font-bold text-slate-400 uppercase mb-1">Style</div>
-                                              <div className="text-sm text-slate-600 mb-3 italic">"{group.style}"</div>
-                                              
-                                              <div className="text-xs font-bold text-slate-400 uppercase mb-1">Characteristics</div>
-                                              <p className="text-xs text-slate-500 mb-4 line-clamp-4 leading-relaxed">{group.characteristics}</p>
-                                              
-                                              <div className="mb-3">
-                                                  <div className="text-xs font-bold text-slate-400 uppercase mb-1">Students</div>
-                                                  <div className="flex flex-wrap gap-1">
-                                                      {group.studentNames.map(name => (
-                                                          <span key={name} className="bg-slate-100 text-slate-600 text-[10px] px-1.5 py-0.5 rounded font-medium">{name}</span>
-                                                      ))}
-                                                  </div>
-                                              </div>
-                                              
-                                              <div className="bg-purple-50 p-3 rounded-lg border border-purple-100 mt-auto">
-                                                  <div className="text-xs font-bold text-purple-700 mb-1 flex items-center gap-1">
-                                                      <Sparkles size={10} /> Suggestion
-                                                  </div>
-                                                  <p className="text-xs text-purple-800 leading-relaxed">{group.suggestion}</p>
-                                              </div>
-                                          </div>
-                                       ))}
-                                    </div>
-                                  </div>
+                                    ))
                                 )}
-                                
-                                <div className="grid md:grid-cols-2 gap-6">
-                                    {/* Top Weaknesses Summary (Interactive) */}
-                                    <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-blue-300 transition-colors"
-                                         onClick={() => openReportEvidence("Top Weaknesses Evidence", analysisReport.evidenceSnippets.filter(s => s.type === 'negative'))}
-                                    >
-                                        <div className="flex justify-between items-center mb-4">
-                                            <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                                                <AlertTriangle size={18} className="text-orange-500" /> {t('insights.weakness_rank')}
-                                            </h3>
-                                            <Eye size={16} className="text-slate-400" />
-                                        </div>
-                                        <ul className="space-y-3">
-                                            {(analysisReport.keyWeaknesses || []).slice(0,3).map((w, i) => (
-                                                <li key={i} className="text-sm text-slate-700 flex gap-2 items-start bg-orange-50 p-2 rounded">
-                                                    <span className="text-orange-600 font-bold shrink-0">{i+1}.</span> {w}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-
-                                    {/* Common Errors Summary (Interactive) */}
-                                    <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-blue-300 transition-colors"
-                                         onClick={() => openReportEvidence("Common Errors Evidence", analysisReport.evidenceSnippets.filter(s => s.type === 'negative'))}
-                                    >
-                                        <div className="flex justify-between items-center mb-4">
-                                            <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                                                <Target size={18} className="text-red-500" /> {t('insights.common_errors')}
-                                            </h3>
-                                            <Eye size={16} className="text-slate-400" />
-                                        </div>
-                                        <ul className="space-y-3">
-                                            {(analysisReport.commonErrors || []).slice(0,5).map((w, i) => (
-                                                <li key={i} className="text-sm text-slate-700 flex gap-2 items-start bg-red-50 p-2 rounded">
-                                                    <span className="text-red-500 font-bold shrink-0">•</span> {w}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                </div>
-
-                                {/* Evidence Snippets */}
-                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                                    <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                                        <Quote size={18} className="text-blue-500" /> {t('dash.evidence')}
-                                    </h3>
-                                    <div className="grid md:grid-cols-3 gap-4">
-                                        {(analysisReport.evidenceSnippets || []).map((snippet, i) => (
-                                            <div key={i} className={`p-4 rounded-lg border ${snippet.type === 'positive' ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
-                                                <div className="flex justify-between items-center mb-2">
-                                                    <span className="text-xs font-bold text-slate-500">{snippet.studentName}</span>
-                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold ${snippet.type === 'positive' ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}`}>
-                                                        {snippet.type}
-                                                    </span>
-                                                </div>
-                                                <p className="text-sm font-serif italic text-slate-700 mb-2">"{snippet.quote}"</p>
-                                                <p className="text-xs text-slate-500 border-t border-slate-200/50 pt-2">{snippet.context}</p>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
                             </div>
-                        )}
+                        </div>
+                    </div>
+                )}
+                
+                {/* --- CLASSES TAB --- */}
+                {activeTab === 'classes' && (
+                    <div className="h-full animate-in fade-in slide-in-from-right-4 duration-300">
+                        <ClassesGroupsManager 
+                            teacherId={user.id}
+                            groups={groups}
+                            allStudents={allStudents}
+                            onRefreshData={() => refreshData()}
+                            selectedClass={selectedClass}
+                            setSelectedClass={setSelectedClass}
+                            viewFilter={classViewFilter}
+                            setViewFilter={setClassViewFilter}
+                        />
                     </div>
                 )}
 
-                {/* --- CLASSES TAB --- */}
-                {activeTab === 'classes' && (
-                    <div className="max-w-6xl mx-auto h-[calc(100vh-120px)]">
-                        <ClassesGroupsManager teacherId={user.id} />
+                {/* --- PUBLISH MODAL --- */}
+                {isPublishing && (
+                    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8 animate-in fade-in zoom-in-95 duration-200">
+                             <div className="flex justify-between items-center mb-6">
+                                 <h3 className="font-bold text-xl text-slate-800 flex items-center gap-2">
+                                     <Send size={24} className="text-blue-600" /> {t('assign.publish')}
+                                 </h3>
+                                 <button onClick={() => setIsPublishing(null)} className="p-2 hover:bg-slate-100 rounded-full text-slate-500"><X size={20}/></button>
+                             </div>
+                             
+                             <div className="space-y-6">
+                                 <div>
+                                     <label className="block text-sm font-bold text-slate-700 mb-2">{t('assign.target_class')}</label>
+                                     <select 
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500"
+                                        value={publishClass}
+                                        onChange={(e) => setPublishClass(e.target.value)}
+                                     >
+                                         <option value="">{t('classes.select_class')}...</option>
+                                         {availableClasses.map(c => <option key={c} value={c}>{c}</option>)}
+                                     </select>
+                                 </div>
+
+                                 {publishClass && (
+                                     <div className="animate-in slide-in-from-top-2">
+                                         <label className="block text-sm font-bold text-slate-700 mb-2">{t('assign.target')}</label>
+                                         <div className="grid grid-cols-2 gap-3 mb-4">
+                                             <button 
+                                                onClick={() => setPublishGroupMode('all')}
+                                                className={`py-2 text-sm font-bold rounded-lg border transition-all ${publishGroupMode === 'all' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                                             >
+                                                 {t('assign.all_students')}
+                                             </button>
+                                             <button 
+                                                onClick={() => setPublishGroupMode('select')}
+                                                className={`py-2 text-sm font-bold rounded-lg border transition-all ${publishGroupMode === 'select' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                                             >
+                                                 {t('assign.select_groups')}
+                                             </button>
+                                         </div>
+                                         
+                                         {publishGroupMode === 'select' && (
+                                             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 max-h-40 overflow-y-auto space-y-2">
+                                                 {availablePublishGroups.length === 0 ? (
+                                                     <div className="text-xs text-slate-400 text-center italic">No groups found in this class.</div>
+                                                 ) : (
+                                                     availablePublishGroups.map(g => (
+                                                         <label key={g.id} className="flex items-center gap-3 p-2 hover:bg-white rounded-lg cursor-pointer transition-colors">
+                                                             <input 
+                                                                type="checkbox"
+                                                                checked={publishSelectedGroups.has(g.id)}
+                                                                onChange={(e) => {
+                                                                    const newSet = new Set(publishSelectedGroups);
+                                                                    if (e.target.checked) newSet.add(g.id);
+                                                                    else newSet.delete(g.id);
+                                                                    setPublishSelectedGroups(newSet);
+                                                                }}
+                                                                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                                                             />
+                                                             <span className="text-sm font-medium text-slate-700">{g.name}</span>
+                                                             <span className="text-xs text-slate-400 ml-auto">{g.type}</span>
+                                                         </label>
+                                                     ))
+                                                 )}
+                                             </div>
+                                         )}
+                                     </div>
+                                 )}
+                             </div>
+                             
+                             <div className="mt-8 flex justify-end gap-3">
+                                 <button onClick={() => setIsPublishing(null)} className="px-6 py-2.5 text-slate-500 font-bold text-sm hover:bg-slate-100 rounded-xl transition-colors">{t('classes.cancel')}</button>
+                                 <button 
+                                     onClick={handleConfirmPublish}
+                                     disabled={!publishClass || (publishGroupMode === 'select' && publishSelectedGroups.size === 0)}
+                                     className="px-8 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 disabled:opacity-50 shadow-lg shadow-blue-500/20"
+                                 >
+                                     {t('assign.confirm')}
+                                 </button>
+                             </div>
+                        </div>
+                    </div>
+                )}
+                
+                {/* --- AUTO GROUP MODAL --- */}
+                {showAutoGroupModal && (
+                    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8 animate-in fade-in zoom-in-95 duration-200">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="p-3 bg-purple-100 rounded-full text-purple-600"><Sparkles size={24} /></div>
+                                <div>
+                                    <h3 className="font-bold text-xl text-slate-800">{t('auto.title')}</h3>
+                                    <p className="text-xs text-slate-500">{t('auto.desc')}</p>
+                                </div>
+                            </div>
+                            
+                            <div className="space-y-4 mb-8">
+                                <div className="grid grid-cols-12 gap-4 text-xs font-bold text-slate-400 uppercase tracking-widest px-2">
+                                    <div className="col-span-4">{t('auto.bucket')}</div>
+                                    <div className="col-span-8">{t('auto.group_name')}</div>
+                                </div>
+                                <div className="space-y-3">
+                                    {autoGroupRanges.map((range, idx) => (
+                                        <div key={idx} className="grid grid-cols-12 gap-4 items-center bg-slate-50 p-3 rounded-lg border border-slate-100">
+                                            <div className="col-span-4 font-mono text-sm font-bold text-slate-600">
+                                                {idx === 0 ? '0' : autoGroupRanges[idx-1].max} - {range.max}
+                                            </div>
+                                            <div className="col-span-8">
+                                                <input 
+                                                    type="text" 
+                                                    value={range.name}
+                                                    onChange={(e) => {
+                                                        const newRanges = [...autoGroupRanges];
+                                                        newRanges[idx].name = e.target.value;
+                                                        setAutoGroupRanges(newRanges);
+                                                    }}
+                                                    className="w-full bg-white border border-slate-200 rounded px-2 py-1.5 text-sm font-medium focus:ring-2 focus:ring-purple-500 outline-none"
+                                                />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end gap-3">
+                                <button onClick={() => setShowAutoGroupModal(false)} className="px-6 py-2.5 text-slate-500 font-bold text-sm hover:bg-slate-100 rounded-xl transition-colors">{t('classes.cancel')}</button>
+                                <button onClick={handleGenerateAutoGroups} className="px-8 py-2.5 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 shadow-lg shadow-purple-500/20">{t('auto.generate')}</button>
+                            </div>
+                        </div>
                     </div>
                 )}
             </>
         )}
       </div>
-
-      {/* PUBLISH MODAL */}
-      {isPublishing && (
-           <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-               <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-200">
-                   <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                       <Send size={18} className="text-blue-600" />
-                       {t('assign.publish')}
-                   </h3>
-                   <div className="space-y-4 mb-6">
-                       <div>
-                           <label className="block text-sm font-bold text-slate-700 mb-2">{t('assign.target_class')}</label>
-                           <select 
-                             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                             value={publishClass}
-                             onChange={(e) => setPublishClass(e.target.value)}
-                           >
-                               <option value="">{t('classes.select_class')}</option>
-                               {availableClasses.map(c => (
-                                   <option key={c} value={c}>{c}</option>
-                               ))}
-                           </select>
-                       </div>
-                       
-                       {publishClass && (
-                           <div className="animate-in fade-in slide-in-from-top-2">
-                               <label className="block text-sm font-bold text-slate-700 mb-2">{t('assign.target')}</label>
-                               <div className="flex gap-4 mb-3">
-                                   <label className="flex items-center gap-2 text-sm cursor-pointer">
-                                       <input type="radio" checked={publishGroupMode === 'all'} onChange={() => setPublishGroupMode('all')} className="text-blue-600 focus:ring-blue-500" />
-                                       {t('assign.all_students')}
-                                   </label>
-                                   <label className="flex items-center gap-2 text-sm cursor-pointer">
-                                       <input type="radio" checked={publishGroupMode === 'select'} onChange={() => setPublishGroupMode('select')} className="text-blue-600 focus:ring-blue-500" />
-                                       {t('assign.select_groups')}
-                                   </label>
-                               </div>
-                               
-                               {publishGroupMode === 'select' && (
-                                   <div className="border border-slate-200 rounded-lg p-2 max-h-40 overflow-y-auto space-y-1">
-                                       {availablePublishGroups.map(g => (
-                                           <label key={g.id} className="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer text-sm">
-                                               <input 
-                                                  type="checkbox" 
-                                                  checked={publishSelectedGroups.has(g.id)}
-                                                  onChange={(e) => {
-                                                      const newSet = new Set<string>(publishSelectedGroups);
-                                                      if (e.target.checked) newSet.add(g.id);
-                                                      else newSet.delete(g.id);
-                                                      setPublishSelectedGroups(newSet);
-                                                  }}
-                                                  className="rounded text-blue-600 focus:ring-blue-500"
-                                               />
-                                               <span>{g.name}</span>
-                                           </label>
-                                       ))}
-                                       {availablePublishGroups.length === 0 && <div className="text-xs text-slate-400 italic p-2">No groups available in this class.</div>}
-                                   </div>
-                               )}
-                           </div>
-                       )}
-                   </div>
-                   <div className="flex justify-end gap-2">
-                       <button onClick={() => setIsPublishing(null)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">{t('classes.cancel')}</button>
-                       <button onClick={handleConfirmPublish} disabled={!publishClass} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium">
-                           {t('assign.confirm')}
-                       </button>
-                   </div>
-               </div>
-           </div>
-      )}
-
-      {/* AUTO GROUP MODAL */}
-      {showAutoGroupModal && (
-           <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-               <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-200">
-                   <h3 className="font-bold text-lg mb-2 flex items-center gap-2">
-                       <Sparkles size={18} className="text-purple-600" />
-                       {t('auto.title')}
-                   </h3>
-                   <p className="text-sm text-slate-500 mb-6">{t('auto.desc')}</p>
-                   
-                   <div className="space-y-4 mb-6">
-                       {autoGroupRanges.map((range, idx) => {
-                           const min = idx === 0 ? 0 : autoGroupRanges[idx-1].max;
-                           return (
-                               <div key={idx} className="flex gap-2 items-center">
-                                   <div className="w-24 shrink-0 text-sm font-medium text-slate-600 bg-slate-100 px-2 py-1.5 rounded text-center">
-                                       {min} - {range.max}
-                                   </div>
-                                   <div className="text-slate-300">→</div>
-                                   <input 
-                                      type="text" 
-                                      value={range.name}
-                                      onChange={(e) => {
-                                          const newRanges = [...autoGroupRanges];
-                                          newRanges[idx].name = e.target.value;
-                                          setAutoGroupRanges(newRanges);
-                                      }}
-                                      className="flex-1 border border-slate-300 rounded px-2 py-1.5 text-sm outline-none focus:border-purple-500"
-                                      placeholder="Group Name"
-                                   />
-                               </div>
-                           );
-                       })}
-                   </div>
-
-                   <div className="flex justify-end gap-2">
-                       <button onClick={() => setShowAutoGroupModal(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">{t('classes.cancel')}</button>
-                       <button onClick={handleGenerateAutoGroups} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium">
-                           {t('auto.generate')}
-                       </button>
-                   </div>
-               </div>
-           </div>
-      )}
-      
-      {/* Evidence Drawer for Report Center */}
-      <EvidenceDrawer 
-         isOpen={drawerOpen}
-         onClose={() => setDrawerOpen(false)}
-         title={drawerTitle}
-         evidence={drawerEvidence}
-      />
 
       {selectedSubmission && (
         <SubmissionDetailModal 
@@ -1126,6 +1055,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ user, onExit
             onClose={() => setSelectedSubmission(null)} 
         />
       )}
+      
+      <EvidenceDrawer 
+         isOpen={drawerOpen}
+         onClose={() => setDrawerOpen(false)}
+         title={drawerTitle}
+         evidence={drawerEvidence}
+      />
     </div>
   );
 };
